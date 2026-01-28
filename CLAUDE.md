@@ -10,13 +10,16 @@ A browser-based tool to visualize Age of Empires II: Definitive Edition replay f
 
 ```
 visualizer/
-├── server.py          # Flask backend - handles file uploads and processing
-├── index.html         # Main HTML structure
-├── style.css          # Styling (full-screen map layout)
-├── app.js             # Main application controller
+├── server.py          # Flask backend - handles file uploads, match browsing, replay downloads
+├── players.csv        # List of tracked players (name, profileId)
+├── public/
+│   ├── index.html     # Main HTML structure with match browser modals
+│   ├── style.css      # Styling (full-screen map layout, modal panels)
+│   └── app.js         # Main application controller with match browsing
 ├── renderer.js        # Canvas rendering (isometric projection)
 ├── playback.js        # Game state and animation engine
 ├── generate_data.py   # CLI tool to export replay to JSON
+├── fetch_matches.py   # Prototype script for API testing
 └── replay_data.json   # Pre-generated replay data (optional)
 ```
 
@@ -28,14 +31,34 @@ Flask server that:
 - Serves static files (HTML, CSS, JS)
 - Handles file uploads at `/api/upload` (POST)
 - Processes `.aoe2record` files using mgz library
+- Fetches match history from AoE2 Companion API
+- Downloads and processes replays from aoe.ms
 - Returns JSON data for the frontend
 
-**Key endpoint:**
+**Key endpoints:**
 ```
+GET /api/matches
+- Fetches recent Land Nomad matches from all players in players.csv
+- Deduplicates matches, returns latest 25
+- Returns: JSON array of match objects
+
+GET /api/matches/<player_name>
+- Fetches last 10 matches for a specific player
+- Returns: JSON array of match objects
+
+POST /api/load-match
+- Accepts: JSON with match_id and profile_id
+- Downloads replay ZIP from aoe.ms, extracts .aoe2record, parses with mgz
+- Returns: JSON with match data, players, actions, units
+
 POST /api/upload
 - Accepts: multipart/form-data with 'file' field
 - Returns: JSON with match data, players, actions, units
 ```
+
+**External APIs:**
+- AoE2 Companion API: `https://data.aoe2companion.com/api` (requires User-Agent header)
+- Replay downloads: `https://aoe.ms/replay/?gameId={matchId}&profileId={profileId}`
 
 **Running the server:**
 ```bash
@@ -51,10 +74,11 @@ python3 server.py
 
 Main orchestrator that:
 - Initializes Renderer and Playback instances
-- Handles file upload UI
+- Handles file upload UI and match browsing
 - Manages playback controls (play/pause, speed, timeline)
 - Sets up keyboard shortcuts
 - Manages player visibility toggles
+- Fetches and displays match history from tracked players
 
 **Key methods:**
 - `init()` - Loads default replay or shows upload prompt
@@ -62,6 +86,10 @@ Main orchestrator that:
 - `setupUI()` - Binds event listeners (only once via `controlsInitialized` flag)
 - `togglePlay()` - Play/pause control
 - `startRenderLoop()` - 60fps render loop using requestAnimationFrame
+- `fetchMatches()` - Fetches Land Nomad matches from all tracked players
+- `renderMatchList(matches)` - Displays match list in modal panel
+- `renderMatchDetail(match)` - Shows match details with teams, civs, ratings
+- `loadMatch(matchId, profileId)` - Downloads and loads a replay from aoe.ms
 
 #### renderer.js - Canvas Rendering
 
@@ -117,19 +145,31 @@ Manages game state over time with smooth interpolation.
 ### CSS Layout
 
 Full-screen layout with:
-- Header bar (title, match info, upload button)
+- Header bar (title, match info, browse matches button)
 - Map container (flex: 1, fills available space)
 - Info panel (overlaid on map, top-left)
 - Controls panel (fixed at bottom)
+- Match list modal (overlay panel for browsing matches)
+- Match detail modal (overlay panel for viewing match details before loading)
 
 ## Data Flow
 
+### Direct Upload Flow
 1. **Upload:** User selects `.aoe2record` file
 2. **Process:** Flask saves to temp file, parses with mgz, extracts data
 3. **Return:** JSON with match info, players, units, actions
 4. **Initialize:** Frontend creates Renderer and Playback with data
 5. **Render:** 60fps loop calls `playback.getState()` and `renderer.render(state)`
 6. **Animate:** Playback advances time, interpolates unit positions
+
+### Match Browser Flow
+1. **Browse:** User clicks "Browse Matches" button
+2. **Fetch:** Frontend calls `/api/matches` to get Land Nomad matches from tracked players
+3. **Display:** Match list modal shows recent matches with map, date, players
+4. **Select:** User clicks a match to see details (teams, civs, ratings, winner)
+5. **Load:** User clicks "Load Replay" button
+6. **Download:** Server fetches ZIP from aoe.ms, extracts .aoe2record, parses with mgz
+7. **Initialize:** Same as direct upload flow from step 4
 
 ## Key Implementation Details
 
@@ -175,12 +215,32 @@ setupCanvas() {
 }
 ```
 
+## Configuration
+
+### players.csv
+
+CSV file containing tracked players for match browsing:
+```csv
+name,profileId
+ddk220,612690
+Arkantos12,1314165
+...
+```
+
+The server loads this file to fetch matches from all tracked players. Matches are:
+- Fetched in batches from AoE2 Companion API
+- Deduplicated by matchId
+- Filtered to only include "Land Nomad" maps
+- Sorted by date (newest first)
+- Limited to 25 matches
+
 ## Dependencies
 
 **Python:**
 - Flask, flask-cors - Web server
 - mgz - AoE2 replay parser
 - aocref - Object name lookups
+- requests - HTTP client for API calls
 
 **Frontend:**
 - Vanilla JavaScript (no frameworks)
@@ -195,6 +255,12 @@ setupCanvas() {
 3. **Play button unresponsive:** Check browser console for errors. May be duplicate event listeners.
 
 4. **Map squished:** Ensure `setupCanvas()` calculates proper fit scale.
+
+5. **AoE2 Companion API 403 error:** Ensure User-Agent header is set in requests.
+
+6. **Replay download fails:** Some replays may not be available on aoe.ms. Try a different match.
+
+7. **Railway build cache:** If dependencies aren't updating, clear the build cache in Railway dashboard.
 
 ## Related Files
 
