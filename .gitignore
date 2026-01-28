@@ -3,6 +3,7 @@
 
 # Generated CSV files
 *.csv
+!visualizer/players.csv
 *_stats/
 *_journeys.csv
 
