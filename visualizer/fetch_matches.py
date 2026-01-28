@@ -10,6 +10,7 @@ import requests
 HEADERS = {"User-Agent": "https://github.com/aoe2record-visualizer"}
 
 BASE_URL = "https://data.aoe2companion.com/api"
+REPLAY_URL = "https://aoe.ms/replay"
 
 
 def search_player(search_name: str):
@@ -46,6 +47,11 @@ def get_matches(profile_id: int, count: int = 20):
     }
     resp = requests.get(url, params=params, headers=HEADERS, timeout=15)
     return resp.json()
+
+
+def get_replay_url(match_id: int, profile_id: int) -> str:
+    """Generate the replay download URL for a match from a player's perspective."""
+    return f"{REPLAY_URL}/?gameId={match_id}&profileId={profile_id}"
 
 
 def format_duration(started: str, finished: str) -> str:
@@ -104,6 +110,9 @@ def print_match(match: dict, target_profile_id: int):
                 result = " [LOSS]"
 
             print(f"    - {name} ({civ}) Rating: {rating}{result}{marker}")
+
+    # Print download link for target player's perspective
+    print(f"\nReplay Download: {get_replay_url(match_id, target_profile_id)}")
 
 
 def main():
