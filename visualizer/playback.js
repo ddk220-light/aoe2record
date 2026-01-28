@@ -373,6 +373,31 @@ class Playback {
         alive = false;
       }
 
+      // Check for 5-minute inactivity (unit disappears if no commands for 5 min)
+      const INACTIVITY_THRESHOLD = 5 * 60; // 5 minutes in seconds
+      const movements = unit.movements || [];
+      if (movements.length > 0) {
+        // Find the last command before or at current time
+        let lastCommandTime = null;
+        for (const movement of movements) {
+          if (movement.time <= this.currentTime) {
+            lastCommandTime = movement.time;
+          }
+        }
+
+        if (lastCommandTime !== null) {
+          const timeSinceLastCommand = this.currentTime - lastCommandTime;
+          if (timeSinceLastCommand > INACTIVITY_THRESHOLD) {
+            // Unit hasn't been commanded in 5+ minutes, consider it dead
+            alive = false;
+            // Mark as dying if within 30 seconds of the threshold
+            if (timeSinceLastCommand <= INACTIVITY_THRESHOLD + 30) {
+              dying = true;
+            }
+          }
+        }
+      }
+
       // Get interpolated position
       const pos = this.getUnitPosition(unit);
 
@@ -398,13 +423,15 @@ class Playback {
         const roundedX = Math.round(event.x);
         const roundedY = Math.round(event.y);
 
-        // Check if this building was deleted
+        // Check if this building was deleted (after it was placed)
         let deleted = false;
         for (const deletion of this.buildingDeletions) {
+          // Deletion must happen after the building was placed and before current time
           if (
+            deletion.time > event.time &&
             deletion.time <= this.currentTime &&
-            deletion.x === roundedX &&
-            deletion.y === roundedY
+            Math.abs(deletion.x - roundedX) <= 2 &&
+            Math.abs(deletion.y - roundedY) <= 2
           ) {
             deleted = true;
             break;

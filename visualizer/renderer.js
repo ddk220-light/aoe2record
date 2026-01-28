@@ -748,12 +748,67 @@ class Renderer {
       );
     }
 
-    // Draw units
+    // Draw units - group by position to spread overlapping units
+    const unitsByPosition = new Map();
     for (const [name, unit] of state.units) {
       if (!unit.alive) continue;
 
-      const opacity = unit.dying ? 0.5 : 1;
-      this.drawUnit(unit.x, unit.y, unit.player, unit.type, opacity);
+      // Round position to group nearby units
+      const key = `${Math.round(unit.x * 2) / 2}_${Math.round(unit.y * 2) / 2}`;
+      if (!unitsByPosition.has(key)) {
+        unitsByPosition.set(key, []);
+      }
+      unitsByPosition.get(key).push({ name, unit });
+    }
+
+    // Draw each group with offsets
+    for (const [posKey, units] of unitsByPosition) {
+      const count = units.length;
+
+      for (let i = 0; i < count; i++) {
+        const { name, unit } = units[i];
+        const opacity = unit.dying ? 0.5 : 1;
+
+        // Calculate offset for multiple units at same position
+        let offsetX = 0;
+        let offsetY = 0;
+
+        if (count > 1) {
+          // Arrange units in a circle/grid pattern around the center
+          const spacing = 1.5; // Game units spacing
+          if (count <= 4) {
+            // Square pattern for 2-4 units
+            const offsets = [
+              [-0.5, -0.5],
+              [0.5, -0.5],
+              [-0.5, 0.5],
+              [0.5, 0.5],
+            ];
+            offsetX = offsets[i][0] * spacing;
+            offsetY = offsets[i][1] * spacing;
+          } else if (count <= 9) {
+            // 3x3 grid for 5-9 units
+            const row = Math.floor(i / 3);
+            const col = i % 3;
+            offsetX = (col - 1) * spacing;
+            offsetY = (row - 1) * spacing;
+          } else {
+            // Circle pattern for many units
+            const angle = (i / count) * Math.PI * 2;
+            const radius = Math.ceil(Math.sqrt(count)) * spacing * 0.5;
+            offsetX = Math.cos(angle) * radius;
+            offsetY = Math.sin(angle) * radius;
+          }
+        }
+
+        this.drawUnit(
+          unit.x + offsetX,
+          unit.y + offsetY,
+          unit.player,
+          unit.type,
+          opacity,
+        );
+      }
     }
   }
 
@@ -774,25 +829,16 @@ class Renderer {
       wallWidth = 3 * this.zoom;
     }
 
-    // Draw the wall line
-    this.ctx.strokeStyle = wallColor;
-    this.ctx.lineWidth = wallWidth;
-    this.ctx.lineCap = "round";
-
-    this.ctx.beginPath();
-    this.ctx.moveTo(start.x, start.y);
-    this.ctx.lineTo(end.x, end.y);
-    this.ctx.stroke();
-
-    // Draw outline for visibility
-    this.ctx.strokeStyle = "rgba(0, 0, 0, 0.5)";
+    // Draw outline first (darker/thicker line behind)
+    this.ctx.strokeStyle = "rgba(0, 0, 0, 0.7)";
     this.ctx.lineWidth = wallWidth + 2 * this.zoom;
+    this.ctx.lineCap = "round";
     this.ctx.beginPath();
     this.ctx.moveTo(start.x, start.y);
     this.ctx.lineTo(end.x, end.y);
     this.ctx.stroke();
 
-    // Redraw wall on top
+    // Draw the wall line on top
     this.ctx.strokeStyle = wallColor;
     this.ctx.lineWidth = wallWidth;
     this.ctx.beginPath();

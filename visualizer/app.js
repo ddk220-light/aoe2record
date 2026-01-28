@@ -343,6 +343,9 @@ class App {
               this.playerVisibility[building.player] !== false,
           ),
         ),
+        walls: (state.walls || []).filter(
+          (wall) => this.playerVisibility[wall.player] !== false,
+        ),
         actionLines: state.actionLines.filter(
           (line) => this.playerVisibility[line.player] !== false,
         ),
