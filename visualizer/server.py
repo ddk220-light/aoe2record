@@ -15,7 +15,7 @@ import mgz.model
 from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 
-app = Flask(__name__, static_folder=".", static_url_path="")
+app = Flask(__name__, static_folder="public", static_url_path="")
 CORS(app)
 
 # AoE2 standard player colors
@@ -518,12 +518,12 @@ def process_replay(replay_file):
 
 @app.route("/")
 def index():
-    return send_from_directory(".", "index.html")
+    return send_from_directory("public", "index.html")
 
 
 @app.route("/<path:path>")
 def static_files(path):
-    return send_from_directory(".", path)
+    return send_from_directory("public", path)
 
 
 @app.route("/api/upload", methods=["POST"])
@@ -570,6 +570,8 @@ def get_default_replay():
 
 
 if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 8000))
+    debug = os.environ.get("FLASK_DEBUG", "true").lower() == "true"
     print("Starting AoE2 Replay Visualizer server...")
-    print("Open http://localhost:8000 in your browser")
-    app.run(debug=True, host="0.0.0.0", port=8000)
+    print(f"Open http://localhost:{port} in your browser")
+    app.run(debug=debug, host="0.0.0.0", port=port)
