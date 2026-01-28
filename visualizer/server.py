@@ -656,7 +656,7 @@ def load_match():
         download_url = (
             f"{REPLAY_DOWNLOAD_URL}/?gameId={match_id}&profileId={profile_id}"
         )
-        print(f"Downloading replay from: {download_url}")
+        app.logger.info(f"Downloading replay from: {download_url}")
 
         resp = requests.get(
             download_url,
@@ -672,7 +672,7 @@ def load_match():
 
         # Read ZIP content
         zip_content = resp.content
-        print(f"Downloaded {len(zip_content)} bytes")
+        app.logger.info(f"Downloaded {len(zip_content)} bytes")
 
         # Extract .aoe2record from ZIP
         with zipfile.ZipFile(io.BytesIO(zip_content)) as zf:
@@ -686,7 +686,7 @@ def load_match():
             if not record_file:
                 return jsonify({"error": "No .aoe2record file found in ZIP"}), 500
 
-            print(f"Extracting: {record_file}")
+            app.logger.info(f"Extracting: {record_file}")
 
             # Extract to temp file and process
             with tempfile.NamedTemporaryFile(suffix=".aoe2record", delete=False) as tmp:
