@@ -15,4 +15,4 @@ COPY . .
 EXPOSE 8000
 
 # Run the application with PORT from environment (defaults to 8000)
-CMD gunicorn server:app --bind 0.0.0.0:${PORT:-8000}
+CMD ["/bin/sh", "-c", "gunicorn server:app --bind 0.0.0.0:${PORT:-8000}"]
