@@ -355,6 +355,7 @@ def process_replay(replay_file):
         "players": [],
         "starting_units": [],
         "actions": [],
+        "walls": [],
         "unit_deaths": {},
     }
 
@@ -471,6 +472,29 @@ def process_replay(replay_file):
                 "amount": payload.get("amount"),
             }
         )
+
+        # Capture wall placements
+        if action_type == "WALL":
+            wall_type = payload.get("building", "Palisade Wall")
+            building_id = payload.get("building_id", 72)
+            x_start = pos.x if pos else None
+            y_start = pos.y if pos else None
+            x_end = payload.get("x_end", x_start)
+            y_end = payload.get("y_end", y_start)
+
+            if x_start is not None and y_start is not None:
+                data["walls"].append(
+                    {
+                        "time": action.timestamp.total_seconds(),
+                        "player": action.player.name,
+                        "type": wall_type.lower().replace(" ", ""),
+                        "building_id": building_id,
+                        "x_start": x_start,
+                        "y_start": y_start,
+                        "x_end": x_end,
+                        "y_end": y_end,
+                    }
+                )
 
     # Calculate unit deaths
     for obj_id, actions in unit_actions.items():

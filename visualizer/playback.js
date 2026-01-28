@@ -423,9 +423,26 @@ class Playback {
       }
     }
 
+    // Update walls based on time
+    const currentWalls = [];
+    const walls = this.data.walls || [];
+    for (const wall of walls) {
+      if (wall.time <= this.currentTime) {
+        currentWalls.push({
+          x_start: wall.x_start,
+          y_start: wall.y_start,
+          x_end: wall.x_end,
+          y_end: wall.y_end,
+          player: wall.player,
+          type: wall.type,
+        });
+      }
+    }
+
     return {
       units: interpolatedUnits,
       buildings: currentBuildings,
+      walls: currentWalls,
       actionLines: [], // No more action lines
       currentTime: this.currentTime,
     };

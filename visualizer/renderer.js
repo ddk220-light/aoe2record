@@ -731,6 +731,11 @@ class Renderer {
     this.clear();
     this.drawMap();
 
+    // Draw walls first (below buildings and units)
+    for (const wall of state.walls || []) {
+      this.drawWall(wall);
+    }
+
     // Draw buildings
     for (const [name, building] of state.buildings) {
       const opacity = 1;
@@ -750,6 +755,60 @@ class Renderer {
       const opacity = unit.dying ? 0.5 : 1;
       this.drawUnit(unit.x, unit.y, unit.player, unit.type, opacity);
     }
+  }
+
+  // Draw a wall segment
+  drawWall(wall) {
+    const start = this.gameToCanvas(wall.x_start, wall.y_start);
+    const end = this.gameToCanvas(wall.x_end, wall.y_end);
+    const color = this.playerColors[wall.player] || "#888888";
+
+    // Determine wall style based on type
+    let wallWidth = 4 * this.zoom;
+    let wallColor = color;
+
+    if (wall.type.includes("stone") || wall.type.includes("fortified")) {
+      wallWidth = 6 * this.zoom;
+      wallColor = this.darkenColor(color, 0.2);
+    } else if (wall.type.includes("palisade")) {
+      wallWidth = 3 * this.zoom;
+    }
+
+    // Draw the wall line
+    this.ctx.strokeStyle = wallColor;
+    this.ctx.lineWidth = wallWidth;
+    this.ctx.lineCap = "round";
+
+    this.ctx.beginPath();
+    this.ctx.moveTo(start.x, start.y);
+    this.ctx.lineTo(end.x, end.y);
+    this.ctx.stroke();
+
+    // Draw outline for visibility
+    this.ctx.strokeStyle = "rgba(0, 0, 0, 0.5)";
+    this.ctx.lineWidth = wallWidth + 2 * this.zoom;
+    this.ctx.beginPath();
+    this.ctx.moveTo(start.x, start.y);
+    this.ctx.lineTo(end.x, end.y);
+    this.ctx.stroke();
+
+    // Redraw wall on top
+    this.ctx.strokeStyle = wallColor;
+    this.ctx.lineWidth = wallWidth;
+    this.ctx.beginPath();
+    this.ctx.moveTo(start.x, start.y);
+    this.ctx.lineTo(end.x, end.y);
+    this.ctx.stroke();
+
+    // Draw end posts
+    const postSize = wallWidth * 1.5;
+    this.ctx.fillStyle = this.darkenColor(wallColor, 0.3);
+    this.ctx.beginPath();
+    this.ctx.arc(start.x, start.y, postSize / 2, 0, Math.PI * 2);
+    this.ctx.fill();
+    this.ctx.beginPath();
+    this.ctx.arc(end.x, end.y, postSize / 2, 0, Math.PI * 2);
+    this.ctx.fill();
   }
 }
 
