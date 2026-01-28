@@ -12,15 +12,9 @@
                 <h1>AoE2 Replay Visualizer</h1>
                 <div class="header-controls">
                     <span id="match-info">Loading...</span>
-                    <label class="upload-btn" for="file-input">
-                        Upload Replay
-                        <input
-                            type="file"
-                            id="file-input"
-                            accept=".aoe2record,.json"
-                            hidden
-                        />
-                    </label>
+                    <button class="browse-btn" id="browse-matches-btn">
+                        Browse Matches
+                    </button>
                 </div>
             </header>
 
@@ -87,6 +81,67 @@
                     </div>
                 </div>
             </main>
+        </div>
+
+        <!-- Match List Panel Overlay -->
+        <div id="match-list-overlay" class="modal-overlay hidden">
+            <div class="modal-panel match-list-panel">
+                <div class="panel-header">
+                    <h2>Recent Matches</h2>
+                    <button class="close-btn" id="close-match-list">
+                        &times;
+                    </button>
+                </div>
+                <div class="panel-content">
+                    <div id="match-list-loading" class="loading-spinner">
+                        Loading matches...
+                    </div>
+                    <div id="match-list" class="match-list">
+                        <!-- Populated by JS -->
+                    </div>
+                </div>
+                <div class="panel-footer">
+                    <label class="upload-fallback">
+                        Or upload file directly:
+                        <input
+                            type="file"
+                            id="file-input"
+                            accept=".aoe2record"
+                        />
+                    </label>
+                </div>
+            </div>
+        </div>
+
+        <!-- Match Detail Panel Overlay -->
+        <div id="match-detail-overlay" class="modal-overlay hidden">
+            <div class="modal-panel match-detail-panel">
+                <div class="panel-header">
+                    <button class="back-btn" id="back-to-list">
+                        &larr; Back
+                    </button>
+                    <h2>Match Details</h2>
+                    <button class="close-btn" id="close-match-detail">
+                        &times;
+                    </button>
+                </div>
+                <div class="panel-content" id="match-detail-content">
+                    <!-- Populated by JS -->
+                </div>
+                <div class="panel-footer">
+                    <button class="primary-btn" id="load-match-btn">
+                        Load Replay
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Loading Overlay -->
+        <div id="loading-overlay" class="modal-overlay hidden">
+            <div class="loading-panel">
+                <div class="loading-spinner large"></div>
+                <p id="loading-message">Loading replay...</p>
+            </div>
         </div>
 
         <script src="renderer.js"></script>

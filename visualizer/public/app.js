@@ -26,6 +26,20 @@ class App {
     this.actionLog = document.getElementById("action-log");
     this.fileInput = document.getElementById("file-input");
 
+    // Match browsing UI elements
+    this.browseMatchesBtn = document.getElementById("browse-matches-btn");
+    this.matchListOverlay = document.getElementById("match-list-overlay");
+    this.matchListLoading = document.getElementById("match-list-loading");
+    this.matchList = document.getElementById("match-list");
+    this.closeMatchListBtn = document.getElementById("close-match-list");
+    this.matchDetailOverlay = document.getElementById("match-detail-overlay");
+    this.matchDetailContent = document.getElementById("match-detail-content");
+    this.backToListBtn = document.getElementById("back-to-list");
+    this.closeMatchDetailBtn = document.getElementById("close-match-detail");
+    this.loadMatchBtn = document.getElementById("load-match-btn");
+    this.loadingOverlay = document.getElementById("loading-overlay");
+    this.loadingMessage = document.getElementById("loading-message");
+
     this.speedButtons = document.querySelectorAll(".speed-btn");
 
     // Render loop
@@ -39,9 +53,18 @@ class App {
 
     // Track if controls have been set up
     this.controlsInitialized = false;
+
+    // Match browsing state
+    this.currentPlayer = { name: "ddk220", profileId: null };
+    this.matches = [];
+    this.selectedMatch = null;
   }
 
   async init() {
+    // Setup event listeners for match browsing
+    this.setupMatchBrowsing();
+    this.setupFileUpload();
+
     try {
       // Try to load default replay data
       const response = await fetch("replay_data.json");
@@ -49,22 +72,292 @@ class App {
         this.data = await response.json();
         this.initializeWithData();
       } else {
-        // No default data, show upload prompt
-        this.showUploadPrompt();
+        // No default data, show match list panel
+        this.showMatchListPanel();
       }
-
-      // Setup file upload handler
-      this.setupFileUpload();
     } catch (error) {
       console.error("Failed to initialize:", error);
-      this.showUploadPrompt();
-      this.setupFileUpload();
+      this.showMatchListPanel();
     }
   }
 
   showUploadPrompt() {
     document.querySelector(".loading")?.remove();
-    this.matchInfo.textContent = "Upload a replay file to begin";
+    this.matchInfo.textContent = "Click 'Browse Matches' to begin";
+  }
+
+  // ==================== Match Browsing ====================
+
+  setupMatchBrowsing() {
+    // Browse matches button
+    this.browseMatchesBtn.addEventListener("click", () => {
+      this.showMatchListPanel();
+    });
+
+    // Close buttons
+    this.closeMatchListBtn.addEventListener("click", () => {
+      this.hideMatchListPanel();
+    });
+
+    this.closeMatchDetailBtn.addEventListener("click", () => {
+      this.hideMatchDetailPanel();
+    });
+
+    // Back to list
+    this.backToListBtn.addEventListener("click", () => {
+      this.hideMatchDetailPanel();
+      this.showMatchListPanel();
+    });
+
+    // Load match button
+    this.loadMatchBtn.addEventListener("click", () => {
+      if (this.selectedMatch) {
+        this.loadMatch(this.selectedMatch);
+      }
+    });
+
+    // Click outside to close
+    this.matchListOverlay.addEventListener("click", (e) => {
+      if (e.target === this.matchListOverlay) {
+        this.hideMatchListPanel();
+      }
+    });
+
+    this.matchDetailOverlay.addEventListener("click", (e) => {
+      if (e.target === this.matchDetailOverlay) {
+        this.hideMatchDetailPanel();
+      }
+    });
+  }
+
+  async showMatchListPanel() {
+    document.querySelector(".loading")?.remove();
+    this.matchListOverlay.classList.remove("hidden");
+    this.matchListLoading.classList.remove("hidden");
+    this.matchList.innerHTML = "";
+
+    try {
+      await this.fetchMatches(this.currentPlayer.name);
+      this.renderMatchList();
+    } catch (error) {
+      console.error("Failed to fetch matches:", error);
+      this.matchList.innerHTML = `<div class="error-message">Failed to load matches: ${error.message}</div>`;
+    }
+
+    this.matchListLoading.classList.add("hidden");
+  }
+
+  hideMatchListPanel() {
+    this.matchListOverlay.classList.add("hidden");
+  }
+
+  showMatchDetailPanel(match) {
+    this.selectedMatch = match;
+    this.hideMatchListPanel();
+    this.matchDetailOverlay.classList.remove("hidden");
+    this.renderMatchDetail(match);
+  }
+
+  hideMatchDetailPanel() {
+    this.matchDetailOverlay.classList.add("hidden");
+    this.selectedMatch = null;
+  }
+
+  showLoadingOverlay(message) {
+    this.loadingMessage.textContent = message;
+    this.loadingOverlay.classList.remove("hidden");
+  }
+
+  hideLoadingOverlay() {
+    this.loadingOverlay.classList.add("hidden");
+  }
+
+  async fetchMatches(playerName) {
+    const response = await fetch(
+      `/api/matches/${encodeURIComponent(playerName)}`,
+    );
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.error || "Failed to fetch matches");
+    }
+
+    const data = await response.json();
+    this.currentPlayer = data.player;
+    this.matches = data.matches;
+  }
+
+  renderMatchList() {
+    this.matchList.innerHTML = "";
+
+    if (this.matches.length === 0) {
+      this.matchList.innerHTML =
+        '<div class="no-matches">No matches found</div>';
+      return;
+    }
+
+    for (const match of this.matches) {
+      const item = document.createElement("div");
+      item.className = "match-item";
+      item.addEventListener("click", () => this.showMatchDetailPanel(match));
+
+      // Format date
+      const date = new Date(match.started);
+      const dateStr =
+        date.toLocaleDateString() +
+        " " +
+        date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
+      // Calculate duration
+      const duration = this.formatMatchDuration(match.started, match.finished);
+
+      // Find target player's result
+      let targetWon = null;
+      for (const team of match.teams || []) {
+        for (const player of team.players || []) {
+          if (player.profileId === this.currentPlayer.profileId) {
+            targetWon = player.won;
+            break;
+          }
+        }
+      }
+
+      // Get team summaries
+      const teamSummaries = (match.teams || []).map((team) => {
+        const names = team.players.map((p) => p.name).slice(0, 2);
+        const suffix =
+          team.players.length > 2 ? ` +${team.players.length - 2}` : "";
+        const won = team.players[0]?.won;
+        return { names: names.join(", ") + suffix, won };
+      });
+
+      item.innerHTML = `
+        <div class="match-item-header">
+          <span class="match-map">${match.mapName || "Unknown Map"}</span>
+          <span class="match-date">${dateStr}</span>
+        </div>
+        <div class="match-item-body">
+          <div class="match-teams">
+            ${teamSummaries
+              .map(
+                (t, i) => `
+              <span class="match-team ${t.won ? "winner" : "loser"}">${t.names}</span>
+              ${i < teamSummaries.length - 1 ? '<span class="match-vs">vs</span>' : ""}
+            `,
+              )
+              .join("")}
+          </div>
+          <div class="match-meta">
+            <span class="match-duration">${duration}</span>
+            ${targetWon !== null ? `<span class="match-result-indicator ${targetWon ? "win" : "loss"}">${targetWon ? "WIN" : "LOSS"}</span>` : ""}
+          </div>
+        </div>
+      `;
+
+      this.matchList.appendChild(item);
+    }
+  }
+
+  renderMatchDetail(match) {
+    // Format date
+    const date = new Date(match.started);
+    const dateStr =
+      date.toLocaleDateString() +
+      " " +
+      date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
+    // Calculate duration
+    const duration = this.formatMatchDuration(match.started, match.finished);
+
+    // Build teams HTML
+    const teamsHtml = (match.teams || [])
+      .map((team) => {
+        const isWinner = team.players[0]?.won;
+        const playersHtml = team.players
+          .map((player) => {
+            const isTarget = player.profileId === this.currentPlayer.profileId;
+            return `
+            <div class="player-row">
+              <img class="player-civ-icon" src="${player.civImageUrl || ""}" alt="${player.civName}" onerror="this.style.display='none'">
+              <div class="player-info">
+                <div class="player-name ${isTarget ? "target" : ""}">${player.name}${isTarget ? " (you)" : ""}</div>
+                <div class="player-civ">${player.civName || "Unknown"}</div>
+              </div>
+              <div class="player-rating">${player.rating || "?"}</div>
+            </div>
+          `;
+          })
+          .join("");
+
+        return `
+        <div class="team-section">
+          <div class="team-header ${isWinner ? "winner" : ""}">
+            Team ${team.teamId} ${isWinner ? "- VICTORY" : "- DEFEAT"}
+          </div>
+          ${playersHtml}
+        </div>
+      `;
+      })
+      .join("");
+
+    this.matchDetailContent.innerHTML = `
+      <div class="match-detail-header">
+        <h3>${match.mapName || "Unknown Map"}</h3>
+        <div class="match-meta">${dateStr} | ${duration} | ${match.leaderboardName || "Unknown Mode"}</div>
+      </div>
+      <div class="match-teams-detail">
+        ${teamsHtml}
+      </div>
+    `;
+  }
+
+  formatMatchDuration(started, finished) {
+    if (!started || !finished) return "Unknown";
+    const start = new Date(started);
+    const end = new Date(finished);
+    const diffMs = end - start;
+    const diffMins = Math.floor(diffMs / 60000);
+    const diffSecs = Math.floor((diffMs % 60000) / 1000);
+    return `${diffMins}:${diffSecs.toString().padStart(2, "0")}`;
+  }
+
+  async loadMatch(match) {
+    this.hideMatchDetailPanel();
+    this.showLoadingOverlay("Downloading replay...");
+
+    try {
+      const response = await fetch("/api/load-match", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          matchId: match.matchId,
+          profileId: this.currentPlayer.profileId,
+        }),
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || "Failed to load match");
+      }
+
+      this.showLoadingOverlay("Processing replay...");
+      this.data = await response.json();
+
+      // Stop existing render loop if any
+      if (this.renderLoopId) {
+        cancelAnimationFrame(this.renderLoopId);
+      }
+
+      // Clear action log
+      this.actionLog.innerHTML = "";
+
+      // Reinitialize with new data
+      this.initializeWithData();
+      this.hideLoadingOverlay();
+    } catch (error) {
+      console.error("Failed to load match:", error);
+      this.hideLoadingOverlay();
+      alert(`Failed to load match: ${error.message}`);
+    }
   }
 
   initializeWithData() {

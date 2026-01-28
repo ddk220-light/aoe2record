@@ -1,31 +1,15 @@
-#!/usr/bin/env python3
 """
-Flask server for AoE2 Replay Visualizer.
-Handles file uploads and processes replay files.
+Cloudflare Worker for AoE2 Replay Visualizer.
+Handles file uploads and processes replay files using mgz.
 """
 
 import io
 import json
-import os
-import sys
-import tempfile
-import zipfile
 from collections import defaultdict
-from datetime import datetime
 
 import mgz
 import mgz.model
-import requests
-from flask import Flask, jsonify, request, send_from_directory
-from flask_cors import CORS
-
-# AoE2 Companion API settings
-AOE2_COMPANION_API = "https://data.aoe2companion.com/api"
-AOE2_COMPANION_HEADERS = {"User-Agent": "https://github.com/aoe2record-visualizer"}
-REPLAY_DOWNLOAD_URL = "https://aoe.ms/replay"
-
-app = Flask(__name__, static_folder="public", static_url_path="")
-CORS(app)
+from js import Headers, Object, Response
 
 # AoE2 standard player colors
 PLAYER_COLORS = {
@@ -61,7 +45,6 @@ INFANTRY_UNITS = {
     "eliteshotelwarrior",
     "gbeto",
     "elitegbeto",
-    "supplywaggon",
     "huskarl",
     "elitehuskarl",
     "teutonic knight",
@@ -167,8 +150,6 @@ ARCHER_UNITS = {
     "elitejanissary",
     "conquistador",
     "eliteconquistador",
-    "rattaarcher",
-    "eliterattaarcher",
     "chakram thrower",
     "elitechakram thrower",
     "thirisadai",
@@ -191,12 +172,7 @@ SIEGE_UNITS = {
     "houfnice",
 }
 
-MONK_UNITS = {
-    "monk",
-    "missionary",
-    "imam",
-    "warrior priest",
-}
+MONK_UNITS = {"monk", "missionary", "imam", "warrior priest"}
 
 SHIP_UNITS = {
     "galley",
@@ -227,61 +203,38 @@ def classify_unit_type(unit_name):
     """Classify a unit into a category based on its name."""
     name_lower = unit_name.lower().replace("_", " ").replace("-", " ")
 
-    # Check each category
     for infantry in INFANTRY_UNITS:
         if infantry in name_lower:
             return "infantry"
-
     for cavalry in CAVALRY_UNITS:
         if cavalry in name_lower:
             return "cavalry"
-
     for archer in ARCHER_UNITS:
         if archer in name_lower:
             return "archer"
-
     for siege in SIEGE_UNITS:
         if siege in name_lower:
             return "siege"
-
     for monk in MONK_UNITS:
         if monk in name_lower:
             return "monk"
-
     for ship in SHIP_UNITS:
         if ship in name_lower:
             return "ship"
 
-    # Special cases
     if "villager" in name_lower:
         return "villager"
     if "scout" in name_lower:
-        return "cavalry"  # Scout cavalry
+        return "cavalry"
     if "king" in name_lower:
         return "king"
 
-    return "military"  # Default
+    return "military"
 
 
-def load_object_names():
-    """Load object ID to name mappings."""
-    try:
-        import aocref
-
-        aocref_path = os.path.dirname(aocref.__file__)
-        dataset_file = os.path.join(aocref_path, "data", "datasets", "100.json")
-        with open(dataset_file, "r") as f:
-            data = json.load(f)
-            return data.get("objects", {})
-    except:
-        return {}
-
-
-def process_replay(replay_file):
+def process_replay(replay_bytes):
     """Process a replay file and return JSON data."""
-
-    object_names = load_object_names()
-
+    replay_file = io.BytesIO(replay_bytes)
     match = mgz.model.parse_match(replay_file)
     match_duration = match.duration.total_seconds()
 
@@ -459,8 +412,7 @@ def process_replay(replay_file):
         target_name = ""
         if action_type == "BUILD":
             building_id = payload.get("building_id", payload.get("building", ""))
-            building_type = object_names.get(str(building_id), f"building{building_id}")
-            target_name = building_type.lower().replace(" ", "")
+            target_name = f"building{building_id}"
         elif action_type == "DE_QUEUE":
             unit_type = payload.get("unit", "unit")
             target_name = unit_type.lower().replace(" ", "")
@@ -525,203 +477,57 @@ def process_replay(replay_file):
     return data
 
 
-@app.route("/")
-def index():
-    return send_from_directory("public", "index.html")
+def json_response(data, status=200):
+    """Create a JSON response."""
+    headers = Headers.new(
+        {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"}.items()
+    )
+    return Response.new(json.dumps(data), status=status, headers=headers)
 
 
-@app.route("/<path:path>")
-def static_files(path):
-    return send_from_directory("public", path)
+async def on_fetch(request, env):
+    """Handle incoming requests."""
+    url = request.url
+    method = request.method
 
-
-@app.route("/api/upload", methods=["POST"])
-def upload_replay():
-    if "file" not in request.files:
-        return jsonify({"error": "No file provided"}), 400
-
-    file = request.files["file"]
-    if file.filename == "":
-        return jsonify({"error": "No file selected"}), 400
-
-    if not file.filename.endswith(".aoe2record"):
-        return jsonify(
-            {"error": "Invalid file type. Please upload a .aoe2record file"}
-        ), 400
-
-    try:
-        # Save to temp file since mgz needs a proper file handle
-        with tempfile.NamedTemporaryFile(suffix=".aoe2record", delete=False) as tmp:
-            file.save(tmp.name)
-            tmp_path = tmp.name
-
-        try:
-            with open(tmp_path, "rb") as f:
-                data = process_replay(f)
-            return jsonify(data)
-        finally:
-            os.unlink(tmp_path)
-    except Exception as e:
-        import traceback
-
-        traceback.print_exc()
-        return jsonify({"error": f"Failed to process replay: {str(e)}"}), 500
-
-
-@app.route("/api/default", methods=["GET"])
-def get_default_replay():
-    """Return the default replay_data.json if it exists."""
-    try:
-        with open("replay_data.json", "r") as f:
-            return jsonify(json.load(f))
-    except FileNotFoundError:
-        return jsonify({"error": "No default replay data found"}), 404
-
-
-@app.route("/api/matches/<player_name>", methods=["GET"])
-def get_matches(player_name):
-    """Fetch recent matches for a player from AoE2 Companion API."""
-    try:
-        # First, search for the player to get their profile ID
-        search_url = f"{AOE2_COMPANION_API}/profiles"
-        search_resp = requests.get(
-            search_url,
-            params={"search": player_name},
-            headers=AOE2_COMPANION_HEADERS,
-            timeout=15,
-        )
-        search_data = search_resp.json()
-
-        profiles = search_data.get("profiles", [])
-        if not profiles:
-            return jsonify({"error": f"Player '{player_name}' not found"}), 404
-
-        # Find exact match or use first result
-        profile = None
-        for p in profiles:
-            if p.get("name", "").lower() == player_name.lower():
-                profile = p
-                break
-        if not profile:
-            profile = profiles[0]
-
-        profile_id = profile.get("profileId")
-
-        # Fetch recent matches
-        matches_url = f"{AOE2_COMPANION_API}/matches"
-        matches_resp = requests.get(
-            matches_url,
-            params={"profile_ids": profile_id, "perPage": 10},
-            headers=AOE2_COMPANION_HEADERS,
-            timeout=15,
-        )
-        matches_data = matches_resp.json()
-
-        return jsonify(
+    # Handle CORS preflight
+    if method == "OPTIONS":
+        headers = Headers.new(
             {
-                "player": {
-                    "profileId": profile_id,
-                    "name": profile.get("name"),
-                    "country": profile.get("country"),
-                    "games": profile.get("games"),
-                },
-                "matches": matches_data.get("matches", []),
-            }
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+                "Access-Control-Allow-Headers": "Content-Type",
+            }.items()
         )
+        return Response.new("", status=204, headers=headers)
 
-    except requests.RequestException as e:
-        return jsonify({"error": f"Failed to fetch matches: {str(e)}"}), 500
-    except Exception as e:
-        import traceback
+    # Parse URL path
+    path = url.split("//")[1].split("/", 1)
+    path = "/" + path[1] if len(path) > 1 else "/"
 
-        traceback.print_exc()
-        return jsonify({"error": f"Error: {str(e)}"}), 500
+    # Remove query string
+    path = path.split("?")[0]
 
-
-@app.route("/api/load-match", methods=["POST"])
-def load_match():
-    """Download replay from aoe.ms, unzip, parse, and return replay data."""
-    data = request.get_json()
-    if not data:
-        return jsonify({"error": "No JSON data provided"}), 400
-
-    match_id = data.get("matchId")
-    profile_id = data.get("profileId")
-
-    if not match_id or not profile_id:
-        return jsonify({"error": "matchId and profileId are required"}), 400
-
-    try:
-        # Download replay ZIP from aoe.ms
-        download_url = (
-            f"{REPLAY_DOWNLOAD_URL}/?gameId={match_id}&profileId={profile_id}"
-        )
-        print(f"Downloading replay from: {download_url}")
-
-        resp = requests.get(
-            download_url,
-            headers={"User-Agent": "Mozilla/5.0"},
-            timeout=60,
-            stream=True,
-        )
-
-        if resp.status_code != 200:
-            return jsonify(
-                {"error": f"Failed to download replay: HTTP {resp.status_code}"}
-            ), 500
-
-        # Read ZIP content
-        zip_content = resp.content
-        print(f"Downloaded {len(zip_content)} bytes")
-
-        # Extract .aoe2record from ZIP
-        with zipfile.ZipFile(io.BytesIO(zip_content)) as zf:
-            # Find the .aoe2record file in the ZIP
-            record_file = None
-            for name in zf.namelist():
-                if name.endswith(".aoe2record"):
-                    record_file = name
-                    break
-
-            if not record_file:
-                return jsonify({"error": "No .aoe2record file found in ZIP"}), 500
-
-            print(f"Extracting: {record_file}")
-
-            # Extract to temp file and process
-            with tempfile.NamedTemporaryFile(suffix=".aoe2record", delete=False) as tmp:
-                tmp.write(zf.read(record_file))
-                tmp_path = tmp.name
-
+    # API routes
+    if path == "/api/upload" and method == "POST":
         try:
-            with open(tmp_path, "rb") as f:
-                replay_data = process_replay(f)
+            # Get the form data
+            form_data = await request.formData()
+            file = form_data.get("file")
 
-            # Add match metadata
-            replay_data["source"] = {
-                "matchId": match_id,
-                "profileId": profile_id,
-                "downloadUrl": download_url,
-            }
+            if not file:
+                return json_response({"error": "No file provided"}, 400)
 
-            return jsonify(replay_data)
-        finally:
-            os.unlink(tmp_path)
+            # Read file bytes
+            file_bytes = await file.arrayBuffer()
+            file_bytes = bytes(file_bytes)
 
-    except requests.RequestException as e:
-        return jsonify({"error": f"Failed to download replay: {str(e)}"}), 500
-    except zipfile.BadZipFile:
-        return jsonify({"error": "Downloaded file is not a valid ZIP"}), 500
-    except Exception as e:
-        import traceback
+            # Process the replay
+            data = process_replay(file_bytes)
+            return json_response(data)
 
-        traceback.print_exc()
-        return jsonify({"error": f"Failed to process replay: {str(e)}"}), 500
+        except Exception as e:
+            return json_response({"error": f"Failed to process replay: {str(e)}"}, 500)
 
-
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8000))
-    debug = os.environ.get("FLASK_DEBUG", "true").lower() == "true"
-    print("Starting AoE2 Replay Visualizer server...")
-    print(f"Open http://localhost:{port} in your browser")
-    app.run(debug=debug, host="0.0.0.0", port=port)
+    # Let Cloudflare handle static assets
+    return env.ASSETS.fetch(request)
