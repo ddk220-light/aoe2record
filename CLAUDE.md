@@ -90,6 +90,9 @@ Main orchestrator that:
 - `renderMatchList(matches)` - Displays match list in modal panel
 - `renderMatchDetail(match)` - Shows match details with teams, civs, ratings
 - `loadMatch(matchId, profileId)` - Downloads and loads a replay from aoe.ms
+- `setupPlayerLegend()` - Creates player list grouped by team with civilizations
+- `updatePlayerTracker(time)` - Updates production rates display with color coding
+- `calculateProductionRates(time)` - Calculates villager/military production per minute
 
 #### renderer.js - Canvas Rendering
 
@@ -142,12 +145,19 @@ Manages game state over time with smooth interpolation.
 - Death time = last_command_time + 5 minutes
 - Dying units (within 30s of death) rendered at 50% opacity
 
+**Team data from mgz:**
+- `player.team` returns a list of `Player` objects (not strings)
+- Must convert to strings with `[str(tm) for tm in player.team]` for JSON serialization
+- Team list includes the player themselves along with their teammates
+
 ### CSS Layout
 
 Full-screen layout with:
 - Header bar (title, match info, browse matches button)
 - Map container (flex: 1, fills available space)
-- Info panel (overlaid on map, top-left)
+- Info panel (overlaid on map, top-left):
+  - Player legend with team grouping and civilization display
+  - Player production tracker (villagers/min, military/min)
 - Controls panel (fixed at bottom)
 - Match list modal (overlay panel for browsing matches)
 - Match detail modal (overlay panel for viewing match details before loading)
@@ -262,6 +272,12 @@ The visualizer uses PNG sprites for units and buildings instead of geometric sha
 - Idle villagers (30s+ no action): 50% opacity, fading to 25% by 5 minutes, rendered below active units
 - Attack arrows: Drawn from attacker to target in player color, visible for 5 seconds after attack command
 - Ranged units (archer, siege): Stay at distance when attacking instead of moving to target
+
+**Player info panel features:**
+- Player legend groups players by team (Team 1, Team 2, etc.)
+- Civilization shown in brackets next to player name
+- Player production tracker shows real-time villagers/min and military/min rates
+- Production rates color-coded: green (#1), light green (top 3), red (last), light red (bottom 3)
 
 **Adding new sprites:**
 1. Add PNG file to appropriate directory (48x48 recommended, transparent background)
