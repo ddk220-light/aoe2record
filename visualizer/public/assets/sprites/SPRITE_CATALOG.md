@@ -79,24 +79,22 @@ This catalog lists all downloaded sprites for verification. Check that each spri
 - guardtower
 - keep
 
-## Type Mapping
+## Sprite Matching Strategy
 
-These sprites will be matched to unit/building types detected in replays:
+**EXACT MATCH ONLY**: Sprites are only used when the unit/building type exactly matches a sprite filename. If no exact match exists, the original geometric shapes are used as fallback.
 
-### Unit Category Fallbacks
-If an exact sprite isn't found, fall back to category:
-- Infantry (militia, manatarms, longswordsman, champion, spearman, pikeman, halberdier) -> Use closest match
-- Archers (archer, crossbowman, arbalester, skirmisher, cavalryarcher) -> Use closest match
-- Cavalry (scoutcavalry, lightcavalry, hussar, knight, cavalier, paladin) -> Use closest match
-- Siege (batteringram, mangonel, scorpion, trebuchet, bombardcannon) -> Use closest match
-- Ships (galley, fireship, transportship, tradecog) -> Use closest match
-- Monks -> monk sprite
-- Villagers -> villager sprite
+### Key Sprites (must have)
+- `villager` - villager.png
+- `archer` - archer.png  
+- `knight` - knight.png
+- `towncenter` - towncenter.png
+- `castle` - castle.png
 
-### Building Fallbacks
-- Production buildings -> Use category building
-- Resource buildings (mill, lumbercamp, miningcamp) -> Use specific or small building shape
-- Defense buildings (towers, walls) -> Use closest match
+### No Fallbacks
+Units/buildings without exact sprite matches will continue to use geometric shapes:
+- Circle for villagers (if no sprite)
+- Triangle for military (if no sprite)
+- Diamond for buildings (if no sprite)
 
 ## Source
 
