@@ -66,8 +66,64 @@ class Renderer {
     // Debug mode: show type labels (for sprite verification)
     this.showTypeLabels = true;
 
+    // Sprite system
+    this.spritesLoaded = false;
+    this.spriteData = null;
+    this.spriteImages = {}; // Cache loaded sprite images
+
     this.setupCanvas();
     this.setupEventListeners();
+    this.loadSprites();
+  }
+
+  // Load sprite metadata and images
+  async loadSprites() {
+    try {
+      // Load sprite metadata
+      const response = await fetch("/assets/sprites/sprites.json");
+      this.spriteData = await response.json();
+
+      // Pre-load key sprite images
+      const keySprites = [
+        { type: "units", name: "villager" },
+        { type: "units", name: "archer" },
+        { type: "units", name: "knight" },
+        { type: "buildings", name: "towncenter" },
+        { type: "buildings", name: "castle" },
+      ];
+
+      const loadPromises = keySprites.map(({ type, name }) => {
+        return new Promise((resolve) => {
+          const spriteInfo = this.spriteData[type]?.[name];
+          if (spriteInfo && spriteInfo.available) {
+            const img = new Image();
+            img.onload = () => {
+              this.spriteImages[name] = img;
+              resolve();
+            };
+            img.onerror = () => {
+              console.warn(`Failed to load sprite: ${name}`);
+              resolve();
+            };
+            img.src = `/assets/sprites/${spriteInfo.file}`;
+          } else {
+            resolve();
+          }
+        });
+      });
+
+      await Promise.all(loadPromises);
+      this.spritesLoaded = true;
+      console.log("Sprites loaded:", Object.keys(this.spriteImages));
+    } catch (error) {
+      console.warn("Failed to load sprites:", error);
+      this.spritesLoaded = false;
+    }
+  }
+
+  // Get sprite image for a unit/building type (exact match only)
+  getSprite(name) {
+    return this.spriteImages[name] || null;
   }
 
   setupCanvas() {
@@ -270,75 +326,112 @@ class Renderer {
     const color = this.playerColors[player] || "#ffffff";
     const size = (this.sizes[type] || this.sizes.military) * this.zoom;
 
-    this.ctx.globalAlpha = opacity;
-    this.ctx.fillStyle = color;
-    this.ctx.strokeStyle = "rgba(0, 0, 0, 0.7)";
-    this.ctx.lineWidth = 1;
+    // Extract actual unit type from name for sprite lookup
+    const actualType = unitName ? this.extractUnitType(unitName) : type;
 
-    switch (type) {
-      case "villager":
-        // Small circle for villagers
-        this.ctx.beginPath();
-        this.ctx.arc(pos.x, pos.y, size / 2, 0, Math.PI * 2);
-        this.ctx.fill();
-        this.ctx.stroke();
-        break;
+    // Try to use sprite (exact match only)
+    const sprite = this.getSprite(actualType);
+    if (sprite) {
+      this.drawSpriteWithPlayerColor(
+        pos.x,
+        pos.y,
+        sprite,
+        color,
+        size * 2.5,
+        opacity,
+      );
+    } else {
+      // Fallback to geometric shapes
+      this.ctx.globalAlpha = opacity;
+      this.ctx.fillStyle = color;
+      this.ctx.strokeStyle = "rgba(0, 0, 0, 0.7)";
+      this.ctx.lineWidth = 1;
 
-      case "infantry":
-        // Shield shape (rounded rectangle) for infantry
-        this.drawShield(pos.x, pos.y, size);
-        break;
+      switch (type) {
+        case "villager":
+          // Small circle for villagers
+          this.ctx.beginPath();
+          this.ctx.arc(pos.x, pos.y, size / 2, 0, Math.PI * 2);
+          this.ctx.fill();
+          this.ctx.stroke();
+          break;
 
-      case "archer":
-        // Diamond/arrow shape for archers
-        this.drawArcher(pos.x, pos.y, size, color);
-        break;
+        case "infantry":
+          // Shield shape (rounded rectangle) for infantry
+          this.drawShield(pos.x, pos.y, size);
+          break;
 
-      case "cavalry":
-        // Horizontal oval/horse shape for cavalry
-        this.drawCavalry(pos.x, pos.y, size, color);
-        break;
+        case "archer":
+          // Diamond/arrow shape for archers
+          this.drawArcher(pos.x, pos.y, size, color);
+          break;
 
-      case "siege":
-        // Square for siege units
-        this.ctx.fillRect(pos.x - size / 2, pos.y - size / 2, size, size);
-        this.ctx.strokeRect(pos.x - size / 2, pos.y - size / 2, size, size);
-        break;
+        case "cavalry":
+          // Horizontal oval/horse shape for cavalry
+          this.drawCavalry(pos.x, pos.y, size, color);
+          break;
 
-      case "monk":
-        // Cross shape for monks
-        this.drawMonk(pos.x, pos.y, size, color);
-        break;
+        case "siege":
+          // Square for siege units
+          this.ctx.fillRect(pos.x - size / 2, pos.y - size / 2, size, size);
+          this.ctx.strokeRect(pos.x - size / 2, pos.y - size / 2, size, size);
+          break;
 
-      case "ship":
-        // Boat shape for ships
-        this.drawShip(pos.x, pos.y, size, color);
-        break;
+        case "monk":
+          // Cross shape for monks
+          this.drawMonk(pos.x, pos.y, size, color);
+          break;
 
-      case "king":
-        // Star/crown for king
-        this.drawKing(pos.x, pos.y, size, color);
-        break;
+        case "ship":
+          // Boat shape for ships
+          this.drawShip(pos.x, pos.y, size, color);
+          break;
 
-      default:
-        // Triangle for unknown military
-        this.ctx.beginPath();
-        this.ctx.moveTo(pos.x, pos.y - size / 2);
-        this.ctx.lineTo(pos.x - size / 2, pos.y + size / 2);
-        this.ctx.lineTo(pos.x + size / 2, pos.y + size / 2);
-        this.ctx.closePath();
-        this.ctx.fill();
-        this.ctx.stroke();
+        case "king":
+          // Star/crown for king
+          this.drawKing(pos.x, pos.y, size, color);
+          break;
+
+        default:
+          // Triangle for unknown military
+          this.ctx.beginPath();
+          this.ctx.moveTo(pos.x, pos.y - size / 2);
+          this.ctx.lineTo(pos.x - size / 2, pos.y + size / 2);
+          this.ctx.lineTo(pos.x + size / 2, pos.y + size / 2);
+          this.ctx.closePath();
+          this.ctx.fill();
+          this.ctx.stroke();
+      }
+
+      this.ctx.globalAlpha = 1;
     }
-
-    this.ctx.globalAlpha = 1;
 
     // Draw type label if debug mode is on
     if (this.showTypeLabels && unitName) {
-      // Extract unit type from name (e.g., "knight" from "knight_PlayerName_1")
-      const actualType = this.extractUnitType(unitName);
       this.drawTypeLabel(pos.x, pos.y, actualType, size);
     }
+  }
+
+  // Draw a sprite with player color indicator (glow effect)
+  drawSpriteWithPlayerColor(x, y, sprite, playerColor, size, opacity = 1) {
+    const ctx = this.ctx;
+    ctx.globalAlpha = opacity;
+
+    // Draw player color glow/background circle
+    ctx.fillStyle = playerColor;
+    ctx.beginPath();
+    ctx.arc(x, y, size / 2 + 2, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Draw black outline
+    ctx.strokeStyle = "rgba(0, 0, 0, 0.7)";
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    // Draw the sprite centered
+    ctx.drawImage(sprite, x - size / 2, y - size / 2, size, size);
+
+    ctx.globalAlpha = 1;
   }
 
   // Extract the unit type from the full unit name
@@ -513,37 +606,58 @@ class Renderer {
     const color = this.playerColors[player] || "#ffffff";
     const typeClean = buildingType.toLowerCase().replace(/\s/g, "");
 
-    this.ctx.globalAlpha = opacity;
-    this.ctx.fillStyle = color;
-    this.ctx.strokeStyle = "rgba(0, 0, 0, 0.7)";
-    this.ctx.lineWidth = 1;
-
     // Determine building size for rendering
     let size = this.sizes.building_small * this.zoom;
+    let spriteType = typeClean;
 
-    // Draw different building types
     if (typeClean.includes("towncenter")) {
-      this.drawTownCenter(pos.x, pos.y, color);
       size = this.sizes.towncenter * this.zoom;
+      spriteType = "towncenter";
     } else if (typeClean.includes("castle")) {
-      this.drawCastle(pos.x, pos.y, color);
       size = this.sizes.castle * this.zoom;
+      spriteType = "castle";
     } else if (this.largeBuildings.has(typeClean)) {
-      this.drawLargeBuilding(
-        pos.x,
-        pos.y,
-        this.sizes.building_large * this.zoom,
-      );
       size = this.sizes.building_large * this.zoom;
-    } else {
-      this.drawSmallBuilding(
-        pos.x,
-        pos.y,
-        this.sizes.building_small * this.zoom,
-      );
     }
 
-    this.ctx.globalAlpha = 1;
+    // Try to use sprite (exact match only)
+    const sprite = this.getSprite(spriteType);
+    if (sprite) {
+      this.drawSpriteWithPlayerColor(
+        pos.x,
+        pos.y,
+        sprite,
+        color,
+        size * 1.5,
+        opacity,
+      );
+    } else {
+      // Fallback to geometric shapes
+      this.ctx.globalAlpha = opacity;
+      this.ctx.fillStyle = color;
+      this.ctx.strokeStyle = "rgba(0, 0, 0, 0.7)";
+      this.ctx.lineWidth = 1;
+
+      if (typeClean.includes("towncenter")) {
+        this.drawTownCenter(pos.x, pos.y, color);
+      } else if (typeClean.includes("castle")) {
+        this.drawCastle(pos.x, pos.y, color);
+      } else if (this.largeBuildings.has(typeClean)) {
+        this.drawLargeBuilding(
+          pos.x,
+          pos.y,
+          this.sizes.building_large * this.zoom,
+        );
+      } else {
+        this.drawSmallBuilding(
+          pos.x,
+          pos.y,
+          this.sizes.building_small * this.zoom,
+        );
+      }
+
+      this.ctx.globalAlpha = 1;
+    }
 
     // Draw type label if debug mode is on (show actual building type)
     if (this.showTypeLabels) {
