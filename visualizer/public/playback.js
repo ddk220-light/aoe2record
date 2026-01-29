@@ -629,6 +629,7 @@ class Playback {
       buildings: currentBuildings,
       walls: currentWalls,
       attacks: activeAttacks, // Attack arrows to draw
+      actionLines: [], // Deprecated, kept for backward compatibility
       currentTime: this.currentTime,
     };
   }
