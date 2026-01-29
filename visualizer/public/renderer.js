@@ -17,7 +17,7 @@ class Renderer {
     // Zoom and pan state
     this.zoom = 1;
     this.minZoom = 0.25;
-    this.maxZoom = 4;
+    this.maxZoom = 8;
     this.panX = 0;
     this.panY = 0;
 
@@ -83,42 +83,52 @@ class Renderer {
       const response = await fetch("/assets/sprites/sprites.json");
       this.spriteData = await response.json();
 
-      // Pre-load key sprite images
-      const keySprites = [
-        { type: "units", name: "villager" },
-        { type: "units", name: "archer" },
-        { type: "units", name: "knight" },
-        { type: "buildings", name: "towncenter" },
-        { type: "buildings", name: "castle" },
-      ];
+      // Load all available sprites
+      const loadPromises = [];
 
-      const loadPromises = keySprites.map(({ type, name }) => {
-        return new Promise((resolve) => {
-          const spriteInfo = this.spriteData[type]?.[name];
-          if (spriteInfo && spriteInfo.available) {
-            const img = new Image();
-            img.onload = () => {
-              this.spriteImages[name] = img;
-              resolve();
-            };
-            img.onerror = () => {
-              console.warn(`Failed to load sprite: ${name}`);
-              resolve();
-            };
-            img.src = `/assets/sprites/${spriteInfo.file}`;
-          } else {
-            resolve();
-          }
-        });
-      });
+      // Load all unit sprites
+      for (const [name, info] of Object.entries(this.spriteData.units || {})) {
+        if (info.available) {
+          loadPromises.push(this.loadSpriteImage(name, info.file));
+        }
+      }
+
+      // Load all building sprites
+      for (const [name, info] of Object.entries(
+        this.spriteData.buildings || {},
+      )) {
+        if (info.available) {
+          loadPromises.push(this.loadSpriteImage(name, info.file));
+        }
+      }
 
       await Promise.all(loadPromises);
       this.spritesLoaded = true;
-      console.log("Sprites loaded:", Object.keys(this.spriteImages));
+      console.log(
+        "Sprites loaded:",
+        Object.keys(this.spriteImages).length,
+        "total",
+      );
     } catch (error) {
       console.warn("Failed to load sprites:", error);
       this.spritesLoaded = false;
     }
+  }
+
+  // Load a single sprite image
+  loadSpriteImage(name, file) {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        this.spriteImages[name] = img;
+        resolve();
+      };
+      img.onerror = () => {
+        console.warn(`Failed to load sprite: ${name}`);
+        resolve();
+      };
+      img.src = `/assets/sprites/${file}`;
+    });
   }
 
   // Get sprite image for a unit/building type (exact match only)
@@ -337,7 +347,7 @@ class Renderer {
         pos.y,
         sprite,
         color,
-        size * 2.5,
+        size * 1.8,
         opacity,
       );
     } else {
@@ -628,7 +638,7 @@ class Renderer {
         pos.y,
         sprite,
         color,
-        size * 1.5,
+        size * 1.2,
         opacity,
       );
     } else {
