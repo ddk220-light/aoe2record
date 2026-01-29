@@ -52,6 +52,12 @@ class App {
     this.productionData = {}; // player -> { villagers: [], military: [] } - arrays of creation times
     this.lastTrackerUpdate = 0;
 
+    // Technology tracking
+    this.researchData = {}; // player -> [{ time, tech }] - sorted by time
+    this.playerAges = {}; // player -> [{ time, age }] - age transitions
+    this.techTracker = document.getElementById("tech-tracker");
+    this.teams = []; // Cached team groupings
+
     // Track if controls have been set up
     this.controlsInitialized = false;
 
@@ -381,6 +387,9 @@ class App {
     // Preprocess production data from DE_QUEUE actions
     this.preprocessProductionData();
 
+    // Preprocess research data for technology tracker
+    this.preprocessResearchData();
+
     // Setup UI
     this.setupUI();
     this.setupKeyboardShortcuts();
@@ -431,6 +440,212 @@ class App {
       this.productionData[player].villagers.sort((a, b) => a - b);
       this.productionData[player].military.sort((a, b) => a - b);
     }
+  }
+
+  preprocessResearchData() {
+    // Reset research data
+    this.researchData = {};
+    this.playerAges = {};
+
+    // Age research names (various formats that might appear)
+    const ageMap = {
+      "feudal age": "Feudal",
+      feudalage: "Feudal",
+      "castle age": "Castle",
+      castleage: "Castle",
+      "imperial age": "Imperial",
+      imperialage: "Imperial",
+    };
+
+    for (const player of this.data.players) {
+      this.researchData[player.name] = [];
+      this.playerAges[player.name] = [{ time: 0, age: "Dark" }]; // Everyone starts in Dark Age
+    }
+
+    // Process all RESEARCH actions
+    for (const action of this.data.actions) {
+      if (action.type === "RESEARCH" && action.target && action.player) {
+        const techName = action.target;
+        const playerData = this.researchData[action.player];
+
+        if (playerData) {
+          // Check for duplicate (same tech at same time)
+          const isDupe = playerData.some(
+            (r) => r.tech === techName && Math.abs(r.time - action.time) < 1,
+          );
+          if (!isDupe) {
+            playerData.push({ time: action.time, tech: techName });
+
+            // Check if this is an age upgrade
+            const normalizedTech = techName.toLowerCase().replace(/\s+/g, "");
+            for (const [key, ageName] of Object.entries(ageMap)) {
+              if (normalizedTech === key.replace(/\s+/g, "")) {
+                this.playerAges[action.player].push({
+                  time: action.time,
+                  age: ageName,
+                });
+                break;
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // Sort research by time
+    for (const player of Object.keys(this.researchData)) {
+      this.researchData[player].sort((a, b) => a.time - b.time);
+      this.playerAges[player].sort((a, b) => a.time - b.time);
+    }
+  }
+
+  getPlayerAge(playerName, currentTime) {
+    const ages = this.playerAges[playerName] || [{ time: 0, age: "Dark" }];
+    let currentAge = "Dark";
+    for (const entry of ages) {
+      if (entry.time <= currentTime) {
+        currentAge = entry.age;
+      } else {
+        break;
+      }
+    }
+    return currentAge;
+  }
+
+  getRecentTechs(playerName, currentTime, limit = 5) {
+    const techs = this.researchData[playerName] || [];
+    // Get techs researched up to current time
+    const researched = techs.filter((t) => t.time <= currentTime);
+    // Return the most recent ones
+    return researched.slice(-limit);
+  }
+
+  formatTechName(tech) {
+    // Convert lowercase tech names to readable format
+    // e.g., "feudalage" -> "Feudal Age", "doublebitaxe" -> "Double Bit Axe"
+    const techNames = {
+      loom: "Loom",
+      feudalage: "Feudal Age",
+      castleage: "Castle Age",
+      imperialage: "Imperial Age",
+      doublebitaxe: "Double-Bit Axe",
+      bowsaw: "Bow Saw",
+      twomansaw: "Two-Man Saw",
+      horsecollar: "Horse Collar",
+      heavyplow: "Heavy Plow",
+      croprotation: "Crop Rotation",
+      goldmining: "Gold Mining",
+      goldshaftmining: "Gold Shaft Mining",
+      stonemining: "Stone Mining",
+      stoneshaftmining: "Stone Shaft Mining",
+      wheelbarrow: "Wheelbarrow",
+      handcart: "Hand Cart",
+      townwatch: "Town Watch",
+      townpatrol: "Town Patrol",
+      fletching: "Fletching",
+      bodkinarrow: "Bodkin Arrow",
+      bracer: "Bracer",
+      forging: "Forging",
+      ironcasting: "Iron Casting",
+      blastfurnace: "Blast Furnace",
+      scalemailarmor: "Scale Mail Armor",
+      chainmailarmor: "Chain Mail Armor",
+      platemailarmor: "Plate Mail Armor",
+      scalebardingarmor: "Scale Barding Armor",
+      chainbardingarmor: "Chain Barding Armor",
+      platebardingarmor: "Plate Barding Armor",
+      paddedarcherarmor: "Padded Archer Armor",
+      leatherarcherarmor: "Leather Archer Armor",
+      ringarcherarmor: "Ring Archer Armor",
+      bloodlines: "Bloodlines",
+      husbandry: "Husbandry",
+      crossbowman: "Crossbowman",
+      arbalester: "Arbalester",
+      eliteskirmisher: "Elite Skirmisher",
+      pikeman: "Pikeman",
+      halberdier: "Halberdier",
+      longswordsman: "Long Swordsman",
+      twohanded: "Two-Handed Swordsman",
+      champion: "Champion",
+      lightcavalry: "Light Cavalry",
+      hussar: "Hussar",
+      cavalier: "Cavalier",
+      paladin: "Paladin",
+      heavycamelarcher: "Heavy Camel Archer",
+      heavycamelrider: "Heavy Camel Rider",
+      thumbring: "Thumb Ring",
+      parthiantactics: "Parthian Tactics",
+      ballistics: "Ballistics",
+      chemistry: "Chemistry",
+      siegeengineers: "Siege Engineers",
+      murder_holes: "Murder Holes",
+      masonry: "Masonry",
+      architecture: "Architecture",
+      heatedshot: "Heated Shot",
+      arrowslits: "Arrowslits",
+      redemption: "Redemption",
+      atonement: "Atonement",
+      herbalMedicine: "Herbal Medicine",
+      heresy: "Heresy",
+      sanctity: "Sanctity",
+      fervor: "Fervor",
+      illumination: "Illumination",
+      blockprinting: "Block Printing",
+      theocracy: "Theocracy",
+      faith: "Faith",
+      careening: "Careening",
+      drydock: "Dry Dock",
+      shipwright: "Shipwright",
+      gillnets: "Gillnets",
+      conscription: "Conscription",
+      spies: "Spies/Treason",
+    };
+
+    const normalized = tech.toLowerCase().replace(/[\s-_]/g, "");
+    return techNames[normalized] || tech;
+  }
+
+  updateTechTracker(currentTime) {
+    if (!this.techTracker || !this.teams.length) return;
+
+    let html = "";
+
+    for (let i = 0; i < this.teams.length; i++) {
+      const teamMembers = this.teams[i];
+
+      html += `<div class="tech-team-section">`;
+      html += `<div class="tech-team-label">Team ${i + 1}</div>`;
+
+      for (const player of teamMembers) {
+        const age = this.getPlayerAge(player.name, currentTime);
+        const ageClass = age.toLowerCase();
+        const recentTechs = this.getRecentTechs(player.name, currentTime, 5);
+
+        html += `<div class="tech-player-row">`;
+        html += `<div class="tech-player-name" style="color: ${player.color_hex}">`;
+        html += `${player.name}`;
+        html += `<span class="tech-player-age ${ageClass}">${age}</span>`;
+        html += `</div>`;
+
+        html += `<div class="tech-list">`;
+        for (const tech of recentTechs) {
+          const mins = Math.floor(tech.time / 60);
+          const secs = Math.floor(tech.time % 60);
+          const timeStr = `${mins}:${secs.toString().padStart(2, "0")}`;
+          html += `<div class="tech-item">`;
+          html += `<span class="tech-name">${this.formatTechName(tech.tech)}</span>`;
+          html += `<span class="tech-time">${timeStr}</span>`;
+          html += `</div>`;
+        }
+        html += `</div>`;
+
+        html += `</div>`;
+      }
+
+      html += `</div>`;
+    }
+
+    this.techTracker.innerHTML = html;
   }
 
   setupFileUpload() {
@@ -580,7 +795,7 @@ class App {
     this.playerLegend.innerHTML = "<h3>Players</h3>";
 
     // Group players by team using their team array (list of teammate names)
-    const teams = [];
+    this.teams = [];
     const assignedPlayers = new Set();
 
     for (const player of this.data.players) {
@@ -605,20 +820,20 @@ class App {
         }
       }
 
-      teams.push(teamMembers);
+      this.teams.push(teamMembers);
     }
 
     // Render each team
-    teams.forEach((teamMembers, teamIndex) => {
+    this.teams.forEach((teamMembers, teamIndex) => {
       // Add team divider if more than one team
-      if (teams.length > 1 && teamIndex > 0) {
+      if (this.teams.length > 1 && teamIndex > 0) {
         const divider = document.createElement("div");
         divider.className = "team-divider";
         this.playerLegend.appendChild(divider);
       }
 
       // Add team label if more than one team
-      if (teams.length > 1) {
+      if (this.teams.length > 1) {
         const teamLabel = document.createElement("div");
         teamLabel.className = "team-label";
         teamLabel.textContent = `Team ${teamIndex + 1}`;
@@ -634,7 +849,7 @@ class App {
         item.innerHTML = `
           <input type="checkbox" id="player-${player.color_id}" checked>
           <div class="player-color" style="background-color: ${player.color_hex}"></div>
-          <label for="player-${player.color_id}">${player.name}${civ}</label>
+          <label for="player-${player.color_id}">${player.name}${civ}<span class="player-age-badge dark" data-player="${player.name}">Dark</span></label>
         `;
 
         const checkbox = item.querySelector("input");
@@ -645,6 +860,19 @@ class App {
         this.playerLegend.appendChild(item);
       }
     });
+  }
+
+  updatePlayerAgesInLegend(currentTime) {
+    for (const player of this.data.players) {
+      const badge = this.playerLegend.querySelector(
+        `.player-age-badge[data-player="${player.name}"]`,
+      );
+      if (badge) {
+        const age = this.getPlayerAge(player.name, currentTime);
+        badge.textContent = age;
+        badge.className = `player-age-badge ${age.toLowerCase()}`;
+      }
+    }
   }
 
   setupKeyboardShortcuts() {
@@ -714,6 +942,8 @@ class App {
     if (Math.abs(time - this.lastTrackerUpdate) >= 1) {
       this.lastTrackerUpdate = time;
       this.updatePlayerTracker(time);
+      this.updateTechTracker(time);
+      this.updatePlayerAgesInLegend(time);
     }
   }
 
