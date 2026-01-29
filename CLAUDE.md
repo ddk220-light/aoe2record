@@ -246,6 +246,106 @@ The server loads this file to fetch matches from all tracked players. Matches ar
 - Vanilla JavaScript (no frameworks)
 - HTML5 Canvas for rendering
 
+## Sprite System
+
+The visualizer uses PNG sprites for units and buildings instead of geometric shapes.
+
+**Sprite locations:**
+- `visualizer/public/assets/sprites/units/` - Unit sprites (villager, knight, archer, etc.)
+- `visualizer/public/assets/sprites/buildings/` - Building sprites (towncenter, castle, etc.)
+- `visualizer/public/assets/sprites/sprites.json` - Metadata mapping unit/building types to sprite files
+
+**Sprite rendering features:**
+- Units rendered with circular player-color backgrounds
+- Buildings rendered with isometric diamond player-color backgrounds and transformed sprites
+- Building opacity: 100% for first 30s, fades to 50% at 30s, then to 25% by 5 minutes
+- Idle villagers (30s+ no action): 50% opacity, fading to 25% by 5 minutes, rendered below active units
+- Attack arrows: Drawn from attacker to target in player color, visible for 5 seconds after attack command
+- Ranged units (archer, siege): Stay at distance when attacking instead of moving to target
+
+**Adding new sprites:**
+1. Add PNG file to appropriate directory (48x48 recommended, transparent background)
+2. Update `sprites.json` with the mapping
+3. Renderer will automatically load and use the sprite if exact name match exists
+
+## Railway Deployment
+
+The app is deployed to Railway at: https://aoe2-replay-visualizer.up.railway.app
+
+### Project Structure for Railway
+
+Railway requires a `Dockerfile` at the **root level** of the repository. The current setup:
+
+```
+/Dockerfile              # Root Dockerfile that copies from visualizer/
+/visualizer/
+  /Dockerfile            # Original Dockerfile (not used by Railway)
+  /requirements.txt
+  /server.py
+  /public/
+  ...
+```
+
+The root `Dockerfile` copies files from the `visualizer/` subdirectory:
+```dockerfile
+FROM python:3.12-slim
+WORKDIR /app
+COPY visualizer/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY visualizer/ .
+EXPOSE 8000
+CMD ["/bin/sh", "-c", "gunicorn server:app --bind 0.0.0.0:${PORT:-8000}"]
+```
+
+### Deployment Commands
+
+**Link to Railway project (first time):**
+```bash
+railway link --project aoe2-replay-visualizer --service aoe2-replay-visualizer --environment production
+```
+
+**Deploy new changes:**
+```bash
+# Option 1: Push to main branch (auto-deploys if connected to GitHub)
+git push origin main
+
+# Option 2: Manual deploy with railway CLI (uploads local files)
+railway up --detach
+
+# Option 3: Force redeploy of existing code
+railway redeploy --yes
+```
+
+**Monitor deployment:**
+```bash
+# Check build logs
+railway logs --build
+
+# Check runtime logs
+railway logs --tail 50
+
+# Check status
+railway status
+```
+
+### Common Railway Issues
+
+1. **"Railpack could not determine how to build the app"**: Railway's auto-detection failed. Ensure `Dockerfile` exists at the repository root (not in a subdirectory).
+
+2. **"No changes to watched files"**: The `railway redeploy` command reuses cached code. Use `railway up` to upload fresh code.
+
+3. **Build uses old code**: Railway caches builds. Either:
+   - Make a change to force a new build
+   - Use `railway up` instead of `railway redeploy`
+   - Clear build cache in Railway dashboard
+
+4. **Dockerfile not detected**: Railway may use Railpack instead of Dockerfile. Ensure:
+   - `Dockerfile` is at repository root
+   - File is named exactly `Dockerfile` (case-sensitive)
+   - No `railway.json` with conflicting `watchPatterns`
+
+5. **Service not linked**: Run `railway link` with project, service, and environment flags.
+
 ## Common Issues
 
 1. **Port 5000 blocked:** macOS AirPlay uses port 5000. Use port 8000 instead.
