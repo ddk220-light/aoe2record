@@ -585,8 +585,8 @@ class Playback {
       }
     }
 
-    // Get active attack actions (within last 3 seconds)
-    const ATTACK_DISPLAY_DURATION = 3; // Show attack arrows for 3 seconds
+    // Get active attack actions (within last 5 seconds)
+    const ATTACK_DISPLAY_DURATION = 5; // Show attack arrows for 5 seconds
     const activeAttacks = [];
     for (const attack of this.attackActions) {
       const timeSinceAttack = this.currentTime - attack.time;
@@ -601,7 +601,7 @@ class Playback {
               toX: attack.targetX,
               toY: attack.targetY,
               player: attack.player,
-              opacity: 1 - timeSinceAttack / ATTACK_DISPLAY_DURATION, // Fade out
+              opacity: 1 - timeSinceAttack / ATTACK_DISPLAY_DURATION, // Fade out over 5s
             });
           }
         }
