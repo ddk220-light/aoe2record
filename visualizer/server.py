@@ -405,6 +405,10 @@ def process_replay(replay_file):
         color = PLAYER_COLORS.get(
             player.color_id, {"name": "Unknown", "hex": "#FFFFFF"}
         )
+        # Get team info - player.team contains list of teammate names
+        team_names = (
+            list(player.team) if hasattr(player, "team") and player.team else []
+        )
         data["players"].append(
             {
                 "name": player.name,
@@ -414,6 +418,7 @@ def process_replay(replay_file):
                 "civilization": player.civilization
                 if hasattr(player, "civilization")
                 else "",
+                "team": team_names,
             }
         )
 

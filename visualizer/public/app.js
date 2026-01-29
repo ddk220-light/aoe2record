@@ -579,25 +579,72 @@ class App {
   setupPlayerLegend() {
     this.playerLegend.innerHTML = "<h3>Players</h3>";
 
+    // Group players by team using their team array (list of teammate names)
+    const teams = [];
+    const assignedPlayers = new Set();
+
     for (const player of this.data.players) {
-      this.playerVisibility[player.name] = true;
+      if (assignedPlayers.has(player.name)) continue;
 
-      const civ = player.civilization ? ` (${player.civilization})` : "";
-      const item = document.createElement("div");
-      item.className = "player-item";
-      item.innerHTML = `
-                <input type="checkbox" id="player-${player.color_id}" checked>
-                <div class="player-color" style="background-color: ${player.color_hex}"></div>
-                <label for="player-${player.color_id}">${player.name}${civ}</label>
-            `;
+      // Find all players on this team
+      const teamMembers = [player];
+      assignedPlayers.add(player.name);
 
-      const checkbox = item.querySelector("input");
-      checkbox.addEventListener("change", (e) => {
-        this.playerVisibility[player.name] = e.target.checked;
-      });
+      // player.team contains names of teammates
+      if (player.team && player.team.length > 0) {
+        for (const teammateName of player.team) {
+          if (!assignedPlayers.has(teammateName)) {
+            const teammate = this.data.players.find(
+              (p) => p.name === teammateName,
+            );
+            if (teammate) {
+              teamMembers.push(teammate);
+              assignedPlayers.add(teammateName);
+            }
+          }
+        }
+      }
 
-      this.playerLegend.appendChild(item);
+      teams.push(teamMembers);
     }
+
+    // Render each team
+    teams.forEach((teamMembers, teamIndex) => {
+      // Add team divider if more than one team
+      if (teams.length > 1 && teamIndex > 0) {
+        const divider = document.createElement("div");
+        divider.className = "team-divider";
+        this.playerLegend.appendChild(divider);
+      }
+
+      // Add team label if more than one team
+      if (teams.length > 1) {
+        const teamLabel = document.createElement("div");
+        teamLabel.className = "team-label";
+        teamLabel.textContent = `Team ${teamIndex + 1}`;
+        this.playerLegend.appendChild(teamLabel);
+      }
+
+      for (const player of teamMembers) {
+        this.playerVisibility[player.name] = true;
+
+        const civ = player.civilization ? ` (${player.civilization})` : "";
+        const item = document.createElement("div");
+        item.className = "player-item";
+        item.innerHTML = `
+          <input type="checkbox" id="player-${player.color_id}" checked>
+          <div class="player-color" style="background-color: ${player.color_hex}"></div>
+          <label for="player-${player.color_id}">${player.name}${civ}</label>
+        `;
+
+        const checkbox = item.querySelector("input");
+        checkbox.addEventListener("change", (e) => {
+          this.playerVisibility[player.name] = e.target.checked;
+        });
+
+        this.playerLegend.appendChild(item);
+      }
+    });
   }
 
   setupKeyboardShortcuts() {

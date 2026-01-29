@@ -282,6 +282,21 @@ main {
     cursor: pointer;
 }
 
+.team-divider {
+    height: 1px;
+    background: #555;
+    margin: 8px 0;
+}
+
+.team-label {
+    font-size: 0.75rem;
+    color: #888;
+    font-weight: 600;
+    margin-bottom: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
 /* Player Tracker - Production rates panel */
 .player-tracker-container {
     background: rgba(37, 37, 56, 0.9);
