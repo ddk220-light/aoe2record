@@ -405,9 +405,11 @@ def process_replay(replay_file):
         color = PLAYER_COLORS.get(
             player.color_id, {"name": "Unknown", "hex": "#FFFFFF"}
         )
-        # Get team info - player.team contains list of teammate names
+        # Get team info - player.team contains list of Player objects, convert to string names
         team_names = (
-            list(player.team) if hasattr(player, "team") and player.team else []
+            [str(tm) for tm in player.team]
+            if hasattr(player, "team") and player.team
+            else []
         )
         data["players"].append(
             {
