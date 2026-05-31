@@ -1120,6 +1120,14 @@ class App {
         case "Digit8":
           this.setSpeed(8);
           break;
+        case "KeyP":
+          // Toggle the player list / production-rates overlay (hidden by default)
+          document.querySelector(".info-panel")?.classList.toggle("hidden");
+          break;
+        case "KeyT":
+          // Toggle the research / Recent Technologies overlay (hidden by default)
+          document.getElementById("tech-panel")?.classList.toggle("hidden");
+          break;
       }
     });
   }
