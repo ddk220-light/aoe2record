@@ -85,6 +85,16 @@ class App {
     this.setupMatchBrowsing();
     this.setupFileUpload();
 
+    // Deep-link: /?match=<aoe2MatchId>&profile=<profileId> auto-loads a replay.
+    // This is what NammaPUBobot posts as the "Watch replay" link after a match.
+    const params = new URLSearchParams(window.location.search);
+    const linkedMatch = params.get("match");
+    if (linkedMatch) {
+      const linkedProfile = params.get("profile") || "612690";
+      await this.loadMatchById(linkedMatch, linkedProfile);
+      return;
+    }
+
     try {
       // Try to load default replay data
       const response = await fetch("replay_data.json");
@@ -385,6 +395,37 @@ class App {
       console.error("Failed to load match:", error);
       this.hideLoadingOverlay();
       alert(`Failed to load match: ${error.message}`);
+    }
+  }
+
+  // Load a replay directly from an aoe2 match id + profile id (deep-link entry).
+  // Unlike loadMatch(), we don't have a full match object — just the two ids.
+  async loadMatchById(matchId, profileId) {
+    document.querySelector(".loading")?.remove();
+    this.showLoadingOverlay("Downloading replay...");
+    try {
+      const response = await fetch("/api/load-match", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ matchId, profileId }),
+      });
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({}));
+        throw new Error(error.error || `HTTP ${response.status}`);
+      }
+      this.showLoadingOverlay("Processing replay...");
+      this.data = await response.json();
+      if (this.renderLoopId) {
+        cancelAnimationFrame(this.renderLoopId);
+      }
+      this.initializeWithData();
+      this.hideLoadingOverlay();
+    } catch (error) {
+      console.error("Deep-link load failed:", error);
+      this.hideLoadingOverlay();
+      this.matchInfo.textContent = `Couldn't load match ${matchId}: ${error.message}`;
+      // Fall back to the normal match browser so the page is still usable.
+      this.showMatchListPanel();
     }
   }
 
