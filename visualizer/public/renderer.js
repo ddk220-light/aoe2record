@@ -1756,30 +1756,61 @@ class Renderer {
       for (const [posKey, units] of unitsByPosition) {
         const count = units.length;
 
-        // Stable slot order: sort by unit name so each unit keeps the same
-        // spiral slot frame-to-frame (no jitter from iteration-order changes).
-        const ordered =
+        // Vogel sunflower spiral in screen pixels: radius = ringStep·√k, angle =
+        // k·goldenAngle. ringStep is set so neighbouring icons overlap ~10%,
+        // giving a dense blob that reads as a massed army rather than a grid.
+        const baseSize = Math.max(3, this.tileHeight * this.zoom * 0.9 * 1.25);
+        const OVERLAP = 0.1; // icons overlap up to ~10%
+        const ringStep = (baseSize * (1 - OVERLAP)) / 1.9;
+
+        // Per-type representative sizing: a group can mix unit types, so we
+        // enlarge ONE unit per distinct type (its first occurrence in the
+        // spiral), sized by how many of that type are present — normal up to 5,
+        // +1/3 of normal per extra 5, capped at 2× (~16-20). A 15-archer +
+        // 1-elephant army then shows a big archer and a small elephant, so the
+        // army's composition reads at a glance.
+        const typeOf = (m) =>
+          (m.name ? this.extractUnitType(m.name) : null) ||
+          m.unit.type ||
+          "unit";
+
+        // Stable order (sort by name) so slots don't jitter frame-to-frame.
+        const sorted =
           count > 1
             ? [...units].sort((a, b) =>
                 a.name < b.name ? -1 : a.name > b.name ? 1 : 0,
               )
             : units;
 
-        // Vogel sunflower spiral in screen pixels: radius = ringStep·√k, angle =
-        // k·goldenAngle. ringStep is set so neighbouring icons overlap ~50%,
-        // giving a dense blob that reads as a massed army rather than a grid.
-        const baseSize = Math.max(3, this.tileHeight * this.zoom * 0.9 * 1.25);
-        const OVERLAP = 0.1; // icons overlap up to ~10%
-        const ringStep = (baseSize * (1 - OVERLAP)) / 1.9;
+        const typeCounts = new Map();
+        for (const m of sorted)
+          typeCounts.set(typeOf(m), (typeCounts.get(typeOf(m)) || 0) + 1);
 
-        // The centre unit grows with the group: same size up to 5 units, then
-        // +1/3 of normal per extra 5, capped at 2× (reached ~16-20 units). Makes
-        // a big incoming army easy to spot at a glance.
-        const centerScale = 1 + Math.min(3, Math.floor((count - 1) / 5)) / 3;
+        // One representative per type (first seen) + everyone else.
+        const reps = [];
+        const rest = [];
+        const seen = new Set();
+        for (const m of sorted) {
+          const t = typeOf(m);
+          if (!seen.has(t)) {
+            seen.add(t);
+            reps.push({ m, n: typeCounts.get(t), t });
+          } else {
+            rest.push(m);
+          }
+        }
+        // Most numerous type sits dead centre and is largest; ties by type name.
+        reps.sort((a, b) => b.n - a.n || (a.t < b.t ? -1 : 1));
 
-        // Draw outermost first so the larger central unit lands on top.
-        for (let k = count - 1; k >= 0; k--) {
-          const { name, unit } = ordered[k];
+        // Spiral order: representatives fill the centre, the rest pack outward.
+        const spiral = [...reps.map((r) => r.m), ...rest];
+        const scaleOf = new Map();
+        for (const r of reps)
+          scaleOf.set(r.m.name, 1 + Math.min(3, Math.floor((r.n - 1) / 5)) / 3);
+
+        // Draw outermost first so larger central representatives land on top.
+        for (let k = spiral.length - 1; k >= 0; k--) {
+          const { name, unit } = spiral[k];
           let opacity = unit.dying ? 0.5 : 1;
 
           // Idle villagers: 50% opacity after 30s, fading to 25% by 5 minutes
@@ -1794,14 +1825,13 @@ class Renderer {
 
           let pxX = 0;
           let pxY = 0;
-          let scale = 1;
           if (count > 1) {
             const radius = ringStep * Math.sqrt(k);
             const angle = k * GOLDEN_ANGLE;
             pxX = radius * Math.cos(angle);
             pxY = radius * Math.sin(angle);
-            if (k === 0) scale = centerScale;
           }
+          const scale = scaleOf.get(name) || 1;
 
           this.drawUnit(
             unit.x,
