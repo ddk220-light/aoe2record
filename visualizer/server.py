@@ -468,19 +468,35 @@ def _extract_animals(match):
             by_id[iid] = a
 
     if by_id:
-        def _touch(a, ts):
+        def _touch(iid, ts):
+            a = by_id.get(iid)
             if a is not None and (a["gone_at"] is None or ts < a["gone_at"]):
                 a["gone_at"] = ts
 
+        def _ref_ids(payload):
+            # Any integer in the action payload that references an object id:
+            # actor ids (object_ids), an attack/interaction target (target_id),
+            # etc. Animal instance ids are large, so small fields (coords, tech
+            # ids) won't collide — and we only ever match against known animals.
+            for v in payload.values():
+                if isinstance(v, bool):
+                    continue
+                if isinstance(v, int):
+                    yield v
+                elif isinstance(v, (list, tuple, set)):
+                    for x in v:
+                        if isinstance(x, int) and not isinstance(x, bool):
+                            yield x
+
         for action in match.actions:
+            if not getattr(action, "player", None):
+                continue  # only a player taking action removes the animal
             try:
                 ts = action.timestamp.total_seconds()
             except Exception:
                 continue
-            payload = action.payload or {}
-            for oid in payload.get("object_ids", []) or []:
-                _touch(by_id.get(oid), ts)
-            _touch(by_id.get(payload.get("target_id")), ts)
+            for iid in _ref_ids(action.payload or {}):
+                _touch(iid, ts)
 
     return animals
 

@@ -1184,7 +1184,10 @@ class Renderer {
     if (!this.animals || !this.animals.length) return;
     const ctx = this.ctx;
 
-    const size = Math.max(7, this.tileHeight * this.zoom * 1.5);
+    // 0.75x a villager. Villager diameter in drawUnit is tileShort*0.8*1.25
+    // (== tileShort), so the animal tile is tileShort * 0.75 — really small.
+    const villagerSize = this.tileHeight * this.zoom * 0.8 * 1.25;
+    const size = Math.max(4, villagerSize * 0.75);
     const half = size / 2;
     ctx.save();
     ctx.textAlign = "center";
