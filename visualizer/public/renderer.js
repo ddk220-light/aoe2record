@@ -1545,7 +1545,7 @@ class Renderer {
     const emblem = this.getCivEmblem(
       this.playerCivs ? this.playerCivs[base.player] : null,
     );
-    const emblemW = emblem ? fontSize : 0;
+    const emblemW = emblem ? fontSize * 1.25 : 0; // slightly larger than text
     const gap = emblem ? 3 : 0;
     const prefixW = prefix ? ctx.measureText(prefix).width : 0;
     const nameW = ctx.measureText(name).width;
