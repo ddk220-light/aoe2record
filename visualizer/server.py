@@ -348,20 +348,49 @@ def _terrain_hex(name):
         return "#9c7b4a"
     if has("black"):
         return "#111111"
-    return "#4f7a36"  # default: grass
+    return "#5c8a3c"  # default: grass (lighter, clearly distinct from forest)
+
+
+def _is_tree(o):
+    """Is this GAIA object a tree? DE leaves the bulk forest trees unnamed
+    (e.g. object 1717) as class-10 with no name; named class-10 decorations
+    (Grass, Plant) are excluded since they have a name."""
+    n = (getattr(o, "name", None) or "").lower()
+    if any(k in n for k in ("tree", "snag", "stump")):
+        return True
+    if not getattr(o, "name", None) and getattr(o, "class_id", None) == 10:
+        return True
+    return False
 
 
 def _extract_terrain(match):
-    """Flat terrain-id grid + a palette (id -> hex) for the tiles present."""
+    """Flat terrain-id grid + palette (id -> hex). Forest terrain is detected by
+    tree density (one tree per tile) so it's colored distinctly even when aocref
+    has no name for the id (e.g. DE pine-forest terrain 110)."""
+    import collections
+
     mp = match.map
     dim = mp.dimension
     grid = [0] * (dim * dim)
-    present = set()
+    terr_at = {}
     for t in mp.tiles:
         grid[t.position.y * dim + t.position.x] = t.terrain
-        present.add(t.terrain)
+        terr_at[(t.position.x, t.position.y)] = t.terrain
+
+    tile_count = collections.Counter(terr_at.values())
+    tree_on = collections.Counter()
+    for o in getattr(match, "gaia", None) or []:
+        if _is_tree(o):
+            tid = terr_at.get((int(o.position.x), int(o.position.y)))
+            if tid is not None:
+                tree_on[tid] += 1
+    # A terrain id is forest if (nearly) every tile of it carries a tree.
+    forest_ids = {tid for tid, n in tile_count.items() if n and tree_on[tid] / n >= 0.4}
+
     names = _load_terrain_names(getattr(match, "dataset_id", 100))
-    palette = {str(tid): _terrain_hex(names.get(tid, "")) for tid in present}
+    palette = {}
+    for tid in tile_count:
+        palette[str(tid)] = "#2f4d24" if tid in forest_ids else _terrain_hex(names.get(tid, ""))
     return {"dimension": dim, "ids": grid, "palette": palette}
 
 
@@ -387,8 +416,8 @@ def _extract_map_objects(match):
         if not n:
             continue
         cat = next((c for c, kws in _OBJ_CATEGORIES if any(k in n for k in kws)), None)
-        if cat is None:
-            continue
+        if cat is None or cat == "tree":
+            continue  # forests are drawn from terrain, not per-tree dots
         p = getattr(g, "position", None)
         if p is None:
             continue
