@@ -28,6 +28,9 @@ class Renderer {
 
     // Player colors
     this.playerColors = {};
+    // Player civ name (for the base-label emblem) and a cache of emblem images.
+    this.playerCivs = {};
+    this.civImages = {}; // normalized civ name -> Image | null (loading) | false
 
     // Entity sizes
     this.sizes = {
@@ -140,6 +143,29 @@ class Renderer {
   // Get sprite image for a unit/building type (normalized match)
   getSprite(name) {
     return this.spriteImages[this.normKey(name)] || null;
+  }
+
+  // Lazily load a civ emblem (e.g. "Mongols" -> /assets/civs/mongols.png) into
+  // the cache. Stored as null while loading, false on failure, Image on success.
+  loadCivEmblem(civ) {
+    if (!civ) return;
+    const key = this.normKey(civ);
+    if (key in this.civImages) return;
+    this.civImages[key] = null;
+    const img = new Image();
+    img.onload = () => {
+      this.civImages[key] = img;
+    };
+    img.onerror = () => {
+      this.civImages[key] = false;
+    };
+    img.src = `/assets/civs/${key}.png`;
+  }
+
+  // Loaded civ emblem for a civ name, or null if not (yet) available.
+  getCivEmblem(civ) {
+    const img = this.civImages[this.normKey(civ)];
+    return img && img !== true ? (typeof img === "object" ? img : null) : null;
   }
 
   setupCanvas() {
@@ -311,6 +337,10 @@ class Renderer {
     this.playerTeams = {};
     players.forEach((p) => {
       this.playerColors[p.name] = p.color_hex;
+      if (p.civilization) {
+        this.playerCivs[p.name] = p.civilization;
+        this.loadCivEmblem(p.civilization); // preload the emblem image
+      }
     });
     // Assign a stable team number per distinct team roster (FFA -> own team).
     const keyToNum = new Map();
@@ -1329,7 +1359,7 @@ class Renderer {
   // Base name/team labels, drawn last so they always sit above buildings/units.
   drawBaseLabels() {
     if (!this._bases) return;
-    for (const b of this._bases) this.drawBaseLabel(b.center, b.label, b.color);
+    for (const b of this._bases) this.drawBaseLabel(b);
   }
 
   // Is base `b` the one that yields (gets bitten) versus base `c`? The more
@@ -1495,19 +1525,50 @@ class Renderer {
     return poly;
   }
 
-  // Player name + team at the base centre, in the player's colour.
-  drawBaseLabel(center, text, color) {
+  // Base label at its centre, in the player's colour, laid out as
+  // "(team) <civ emblem> Player Name". The emblem is sized to the font height.
+  // The whole thing is centred on the base centroid.
+  drawBaseLabel(base) {
     const ctx = this.ctx;
-    const p = this.gameToCanvas(center.x, center.y);
+    const p = this.gameToCanvas(base.center.x, base.center.y);
+    const fontSize = 13;
+    const color = base.color;
+
     ctx.save();
-    ctx.font = "bold 13px sans-serif";
-    ctx.textAlign = "center";
+    ctx.font = `bold ${fontSize}px sans-serif`;
+    ctx.textAlign = "left";
     ctx.textBaseline = "middle";
-    ctx.lineWidth = 3;
-    ctx.strokeStyle = "rgba(0, 0, 0, 0.8)";
-    ctx.strokeText(text, p.x, p.y);
-    ctx.fillStyle = color;
-    ctx.fillText(text, p.x, p.y);
+
+    const team = this.playerTeams ? this.playerTeams[base.player] : null;
+    const prefix = team ? `(${team}) ` : "";
+    const name = base.player;
+    const emblem = this.getCivEmblem(
+      this.playerCivs ? this.playerCivs[base.player] : null,
+    );
+    const emblemW = emblem ? fontSize : 0;
+    const gap = emblem ? 3 : 0;
+    const prefixW = prefix ? ctx.measureText(prefix).width : 0;
+    const nameW = ctx.measureText(name).width;
+    const total = prefixW + emblemW + gap + nameW;
+
+    let x = p.x - total / 2;
+    const drawText = (t, tx) => {
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = "rgba(0, 0, 0, 0.8)";
+      ctx.strokeText(t, tx, p.y);
+      ctx.fillStyle = color;
+      ctx.fillText(t, tx, p.y);
+    };
+
+    if (prefix) {
+      drawText(prefix, x);
+      x += prefixW;
+    }
+    if (emblem) {
+      ctx.drawImage(emblem, x, p.y - emblemW / 2, emblemW, emblemW);
+      x += emblemW + gap;
+    }
+    drawText(name, x);
     ctx.restore();
   }
 
