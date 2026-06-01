@@ -276,10 +276,30 @@ class App {
           </div>
           <div class="match-meta">
             <span class="match-duration">${duration}</span>
+            ${match.matchId ? `<span class="match-id" title="Match ID (click to copy)">ID: ${match.matchId}</span>` : ""}
             ${targetWon !== null ? `<span class="match-result-indicator ${targetWon ? "win" : "loss"}">${targetWon ? "WIN" : "LOSS"}</span>` : ""}
           </div>
         </div>
       `;
+
+      // Clicking the ID copies it (instead of opening the match).
+      const idEl = item.querySelector(".match-id");
+      if (idEl) {
+        idEl.addEventListener("click", (e) => {
+          e.stopPropagation();
+          const id = String(match.matchId);
+          const done = () => {
+            const prev = idEl.textContent;
+            idEl.textContent = "Copied!";
+            setTimeout(() => (idEl.textContent = prev), 1000);
+          };
+          if (navigator.clipboard?.writeText) {
+            navigator.clipboard.writeText(id).then(done, done);
+          } else {
+            done();
+          }
+        });
+      }
 
       this.matchList.appendChild(item);
     }

@@ -750,6 +750,22 @@ main {
     color: #888;
 }
 
+.match-id {
+    font-family: monospace;
+    font-size: 0.78rem;
+    color: #9ab;
+    background: rgba(255, 255, 255, 0.06);
+    padding: 1px 6px;
+    border-radius: 4px;
+    cursor: pointer;
+    user-select: all;
+}
+
+.match-id:hover {
+    background: rgba(255, 255, 255, 0.14);
+    color: #cde;
+}
+
 .match-result-indicator {
     font-size: 0.75rem;
     padding: 2px 8px;
