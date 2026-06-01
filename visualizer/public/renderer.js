@@ -1242,26 +1242,79 @@ class Renderer {
       this._baseSig = sig;
     }
 
-    for (const base of this._bases) this.drawDottedPolygon(base.poly, base.color);
-    // Labels on top of all outlines.
-    for (const base of this._bases) {
-      this.drawBaseLabel(base.center, base.label, base.color);
+    const bases = this._bases;
+    for (const b of bases) {
+      // Bases of OTHER players that are newer bite into this one. The newer base
+      // keeps its natural shape; this older one is drawn as its shape minus the
+      // newer ones, so its line follows just behind the newer boundary.
+      const newer = bases.filter(
+        (c) => c !== b && c.player !== b.player && this.baseLosesTo(b, c),
+      );
+      this.drawBaseOutline(b, newer);
     }
+    // Labels on top of all outlines.
+    for (const b of bases) this.drawBaseLabel(b.center, b.label, b.color);
   }
 
-  // Compute every base outline for every player: cluster -> buffered hull ->
-  // clipped to the map and to the midline against nearby other players.
+  // Is base `b` the one that yields (gets bitten) versus base `c`? The more
+  // recently built base wins; ties broken deterministically so only one yields.
+  baseLosesTo(b, c) {
+    if (b.recency !== c.recency) return b.recency < c.recency;
+    return b.player < c.player;
+  }
+
+  // Draw base `b`'s dotted outline as its natural shape minus the `newer` bases.
+  // Done with canvas clipping (no polygon-boolean math): the parts of b outside
+  // the newer bases, plus the newer borders that fall inside b (drawn in b's
+  // colour, so b's line hugs just behind each newer boundary).
+  drawBaseOutline(b, newer) {
+    if (!newer || newer.length === 0) {
+      this.drawDottedPolygon(b.poly, b.color);
+      return;
+    }
+    const ctx = this.ctx;
+
+    // Pass 1: b's own border, clipped to outside every newer base.
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, 0, ctx.canvas.width, ctx.canvas.height);
+    for (const c of newer) this._addPolyPath(c.poly);
+    ctx.clip("evenodd"); // canvas minus the newer polygons
+    this.drawDottedPolygon(b.poly, b.color);
+    ctx.restore();
+
+    // Pass 2: the newer borders that lie inside b, drawn in b's colour.
+    ctx.save();
+    ctx.beginPath();
+    this._addPolyPath(b.poly);
+    ctx.clip();
+    for (const c of newer) this.drawDottedPolygon(c.poly, b.color);
+    ctx.restore();
+  }
+
+  // Append a closed polygon (game coords) to the current canvas path.
+  _addPolyPath(poly) {
+    const ctx = this.ctx;
+    for (let i = 0; i < poly.length; i++) {
+      const p = this.gameToCanvas(poly[i].x, poly[i].y);
+      if (i === 0) ctx.moveTo(p.x, p.y);
+      else ctx.lineTo(p.x, p.y);
+    }
+    ctx.closePath();
+  }
+
+  // Compute every base's natural outline for every player: cluster -> buffered
+  // hull -> clipped to the map. Overlap between players is resolved at draw time
+  // (newer bases bite into older ones), so the geometry here stays natural.
   computeAllBases(buildings) {
     // Group buildings by player, ignoring walls/gates and tagging each with its
     // kind so a Town Center can seed a base and a Castle can reach further.
     const byPlayer = new Map();
-    const all = [];
     for (const [, b] of buildings) {
       if (b.x == null || b.y == null) continue;
       const kind = this.buildingKind(b.type);
       if (kind === "wall") continue; // walls don't count toward a base
       b._kind = kind;
-      all.push(b);
       if (!byPlayer.has(b.player)) byPlayer.set(b.player, []);
       byPlayer.get(b.player).push(b);
     }
@@ -1299,20 +1352,19 @@ class Renderer {
         let poly = this.bufferHull(hull, this.BASE_BUFFER);
         poly = this.clipToMap(poly, dim); // keep inside the map
         if (poly.length < 3) continue;
-        // Newest buildings win contested ground: shrink this base out of any
-        // newer enemy building's territory (older bases get pushed back).
-        poly = this.clipAgainstNewer(poly, cl, all, player);
-        if (poly.length < 3) continue;
 
-        let cx = 0, cy = 0;
+        // recency = most recent construction in this base (drives who bites whom)
+        let cx = 0, cy = 0, recency = -Infinity;
         for (const b of cl) {
           cx += b.x;
           cy += b.y;
+          if (b.time != null && b.time > recency) recency = b.time;
         }
         bases.push({
           player,
           color,
           poly,
+          recency,
           center: { x: cx / cl.length, y: cy / cl.length },
           label,
         });
@@ -1354,51 +1406,6 @@ class Renderer {
       }
     }
     return out;
-  }
-
-  // Shrink this base's outline out of any *newer* enemy building's territory, so
-  // the most recently built side wins contested ground (and a base being taken
-  // over visibly recedes as the attacker builds in). Only the older side is
-  // clipped; the newer base keeps its natural shape.
-  clipAgainstNewer(poly, cluster, allBuildings, player) {
-    const castleHalf = (this.BUILDING_HALF + this.BASE_BUFFER) * 2 - this.BASE_BUFFER;
-    let minx = Infinity, miny = Infinity, maxx = -Infinity, maxy = -Infinity;
-    for (const b of cluster) {
-      if (b.x < minx) minx = b.x;
-      if (b.y < miny) miny = b.y;
-      if (b.x > maxx) maxx = b.x;
-      if (b.y > maxy) maxy = b.y;
-    }
-    const margin = 2 * castleHalf + 2 * this.BASE_BUFFER; // generous prefilter radius
-    for (const q of allBuildings) {
-      if (q.player === player) continue;
-      if (q.x < minx - margin || q.x > maxx + margin || q.y < miny - margin || q.y > maxy + margin) {
-        continue;
-      }
-      // nearest of our buildings to this enemy building
-      let best = Infinity, m = null;
-      for (const b of cluster) {
-        const dx = b.x - q.x, dy = b.y - q.y;
-        const d = dx * dx + dy * dy;
-        if (d < best) {
-          best = d;
-          m = b;
-        }
-      }
-      if (m === null) continue;
-      // Only give way when their building is newer than our nearest one.
-      if (!(q.time > m.time)) continue;
-      const dx = q.x - m.x, dy = q.y - m.y;
-      const len = Math.hypot(dx, dy) || 1;
-      const ux = dx / len, uy = dy / len;
-      // +1 tile clearance so the older outline clears the newer one cleanly
-      // (avoids thin overlap slivers without an obvious gap).
-      const reach = (q._kind === "castle" ? castleHalf : this.BUILDING_HALF) + this.BASE_BUFFER + 1;
-      const ex = q.x - ux * reach, ey = q.y - uy * reach; // edge of their territory toward us
-      poly = this.clipByLinear(poly, (p) => (p.x - ex) * ux + (p.y - ey) * uy);
-      if (poly.length < 3) break;
-    }
-    return poly;
   }
 
   // Keep the polygon within the [0, dim] map square.
