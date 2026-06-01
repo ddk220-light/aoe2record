@@ -88,6 +88,9 @@ class App {
     // Deep-link: /?match=<aoe2MatchId>&profile=<profileId> auto-loads a replay.
     // This is what NammaPUBobot posts as the "Watch replay" link after a match.
     const params = new URLSearchParams(window.location.search);
+    // Optional ?t=<seconds> or ?t=<mm:ss> jumps to that moment on load and
+    // starts playing (e.g. to share a specific trebuchet barrage).
+    this.startAtTime = this.parseTimeParam(params.get("t"));
     const linkedMatch = params.get("match");
     if (linkedMatch) {
       const linkedProfile = params.get("profile") || "612690";
@@ -485,8 +488,28 @@ class App {
     // Initial render
     this.startRenderLoop();
 
+    // Deep-link timestamp: jump to the requested moment and start playing so a
+    // shared link lands right on the action (e.g. a trebuchet firing).
+    if (this.startAtTime != null && this.playback) {
+      this.playback.seekTo(this.startAtTime);
+      if (!this.playback.isPlaying) this.togglePlay();
+      this.startAtTime = null; // only on first load, not on later match swaps
+    }
+
     // Remove loading state
     document.querySelector(".loading")?.remove();
+  }
+
+  // Parse a ?t= value: plain seconds ("2600") or mm:ss / hh:mm:ss ("43:20").
+  parseTimeParam(s) {
+    if (!s) return null;
+    if (s.includes(":")) {
+      const parts = s.split(":").map(Number);
+      if (parts.some((n) => Number.isNaN(n))) return null;
+      return parts.reduce((acc, n) => acc * 60 + n, 0);
+    }
+    const v = parseFloat(s);
+    return Number.isNaN(v) ? null : v;
   }
 
   preprocessProductionData() {
