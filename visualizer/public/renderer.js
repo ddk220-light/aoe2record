@@ -1869,8 +1869,72 @@ class Renderer {
       );
     }
 
+    // Trebuchet shots: arcing flaming balls from siege to the building.
+    for (const tp of state.trebProjectiles || []) {
+      this.drawTrebProjectiles(tp);
+    }
+
     // Base labels last, so player names always stay in the foreground.
     this.drawBaseLabels();
+  }
+
+  // Draw a trebuchet's in-flight shots as flaming balls arcing along a parabola
+  // from the siege unit to its target, with a flash on impact.
+  drawTrebProjectiles(tp) {
+    if (tp.fromX === null || tp.toX === null) return;
+    const from = this.gameToCanvas(tp.fromX, tp.fromY);
+    const to = this.gameToCanvas(tp.toX, tp.toY);
+    const dx = to.x - from.x;
+    const dy = to.y - from.y;
+    const dist = Math.hypot(dx, dy);
+    const arcH = Math.min(90, dist * 0.45); // peak lift of the arc, in px
+    const r = Math.max(2, 3.5 * this.zoom);
+    const ctx = this.ctx;
+
+    for (const p of tp.shots) {
+      const x = from.x + dx * p;
+      // Parabolic lift (screen-up is -y); peaks at p=0.5.
+      const y = from.y + dy * p - arcH * 4 * p * (1 - p);
+
+      if (p > 0.9) {
+        this.drawImpactFlash(to.x, to.y, (p - 0.9) / 0.1);
+      }
+
+      ctx.save();
+      ctx.globalCompositeOperation = "lighter";
+      // Outer glow
+      const glow = ctx.createRadialGradient(x, y, 0, x, y, r * 2.4);
+      glow.addColorStop(0, "rgba(255, 230, 150, 0.95)");
+      glow.addColorStop(0.4, "rgba(255, 160, 40, 0.85)");
+      glow.addColorStop(1, "rgba(255, 60, 0, 0)");
+      ctx.fillStyle = glow;
+      ctx.beginPath();
+      ctx.arc(x, y, r * 2.4, 0, Math.PI * 2);
+      ctx.fill();
+      // Bright core
+      ctx.fillStyle = "rgba(255, 245, 200, 1)";
+      ctx.beginPath();
+      ctx.arc(x, y, r * 0.7, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+  }
+
+  // Expanding flash at the impact point; t in 0..1 over the last bit of flight.
+  drawImpactFlash(x, y, t) {
+    const ctx = this.ctx;
+    const radius = (6 + 16 * t) * Math.max(0.6, this.zoom);
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    const g = ctx.createRadialGradient(x, y, 0, x, y, radius);
+    g.addColorStop(0, `rgba(255, 220, 120, ${0.85 * (1 - t)})`);
+    g.addColorStop(0.6, `rgba(255, 120, 20, ${0.5 * (1 - t)})`);
+    g.addColorStop(1, "rgba(255, 60, 0, 0)");
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(x, y, radius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
   }
 
   // Draw an attack arrow from attacker to target

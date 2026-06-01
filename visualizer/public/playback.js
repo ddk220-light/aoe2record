@@ -207,6 +207,36 @@ class Playback {
         player: d.player,
       });
     }
+
+    // Trebuchet firing episodes. A treb keeps trebbing its target from the
+    // moment it's ordered to attack until its next command (or until it fades,
+    // i.e. it was destroyed). We record [start, end] windows + the target
+    // position so getState can spawn arcing projectiles during the window.
+    this.trebAttacks = [];
+    const matchDuration =
+      (this.data.match && this.data.match.duration_seconds) || 1e9;
+    const deaths = this.data.unit_deaths || {};
+    for (const [unitName, movements] of this.unitMovements) {
+      if (!/trebuchet/i.test(unitName)) continue;
+      const player = this.unitOwners.get(unitName);
+      for (let i = 0; i < movements.length; i++) {
+        if (!movements[i].isAttack) continue;
+        const end =
+          i + 1 < movements.length
+            ? movements[i + 1].time
+            : deaths[unitName] != null
+              ? deaths[unitName]
+              : matchDuration;
+        this.trebAttacks.push({
+          unitName,
+          player,
+          targetX: movements[i].x, // the ORDER position = the targeted building
+          targetY: movements[i].y,
+          start: movements[i].time,
+          end,
+        });
+      }
+    }
   }
 
   // Latest interaction time <= `t` for a building key, or null. Binary search
@@ -771,9 +801,9 @@ class Playback {
     const startY = unit.y !== null ? unit.y : movements[0].y;
 
     // Ranged units stop short of their attack target instead of walking onto it.
-    const RANGED_TYPES = new Set(["archer", "siege"]);
-    const RANGED_ATTACK_DISTANCE = 5; // tiles
-    const isRangedUnit = RANGED_TYPES.has(unit.type);
+    // Siege (esp. trebuchets) holds at long range; archers stop a few tiles off.
+    const isRangedUnit = unit.type === "archer" || unit.type === "siege";
+    const RANGED_ATTACK_DISTANCE = unit.type === "siege" ? 12 : 5; // tiles
 
     // Effective destination of command i, given the unit begins it at `from`.
     const destFor = (i, from) => {
@@ -1037,6 +1067,8 @@ class Playback {
       if (timeSinceAttack >= 0 && timeSinceAttack <= ATTACK_DISPLAY_DURATION) {
         // Get attacker positions
         for (const attackerName of attack.attackerNames) {
+          // Trebuchets show arcing projectiles instead of a static arrow.
+          if (/trebuchet/i.test(attackerName)) continue;
           const attackerUnit = interpolatedUnits.get(attackerName);
           if (attackerUnit && attackerUnit.alive) {
             activeAttacks.push({
@@ -1049,6 +1081,43 @@ class Playback {
             });
           }
         }
+      }
+    }
+
+    // Trebuchet projectiles: during a firing window, a treb lobs a shot every
+    // RELOAD seconds; each shot is airborne for FLIGHT seconds. We emit the
+    // in-flight shots (progress 0..1) launching from the treb's current spot to
+    // the targeted building, for the renderer to draw as arcing flaming balls.
+    const TREB_WINDUP = 2; // s to move into range + unpack before first shot
+    const TREB_RELOAD = 3; // s between shots
+    const TREB_FLIGHT = 1.2; // s a shot is airborne
+    const trebProjectiles = [];
+    for (const ep of this.trebAttacks || []) {
+      const fireStart = ep.start + TREB_WINDUP;
+      if (this.currentTime < fireStart || this.currentTime > ep.end) continue;
+      const attacker = interpolatedUnits.get(ep.unitName);
+      if (!attacker || !attacker.alive) continue;
+      const firstK = Math.max(
+        0,
+        Math.ceil((this.currentTime - TREB_FLIGHT - fireStart) / TREB_RELOAD),
+      );
+      const lastK = Math.floor((this.currentTime - fireStart) / TREB_RELOAD);
+      const shots = [];
+      for (let k = firstK; k <= lastK; k++) {
+        const launch = fireStart + k * TREB_RELOAD;
+        if (launch > ep.end) break;
+        const p = (this.currentTime - launch) / TREB_FLIGHT;
+        if (p >= 0 && p <= 1) shots.push(p);
+      }
+      if (shots.length) {
+        trebProjectiles.push({
+          fromX: attacker.x,
+          fromY: attacker.y,
+          toX: ep.targetX,
+          toY: ep.targetY,
+          player: ep.player,
+          shots,
+        });
       }
     }
 
@@ -1073,6 +1142,7 @@ class Playback {
       buildings: currentBuildings,
       walls: currentWalls,
       attacks: activeAttacks, // Attack arrows to draw
+      trebProjectiles: trebProjectiles, // Arcing siege shots to animate
       actionLines: [], // Deprecated, kept for backward compatibility
       currentTime: this.currentTime,
     };
