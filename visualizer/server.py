@@ -649,16 +649,25 @@ def process_replay(replay_file):
                 raw_type = obj.name.lower().replace(" ", "") if obj.name else "unit"
                 unit_class = classify_unit_type(raw_type)
 
+                # Prefer the unit's true spawn point from the replay. Land Nomad
+                # scatters the 3 starting villagers far apart, so falling back to
+                # the first MOVE command (often a single select-all order) would
+                # stack them all at one target instead of their real spawns.
                 start_x, start_y = None, None
-                for action in match.actions:
-                    if not action.player:
-                        continue
-                    payload = action.payload or {}
-                    if obj.instance_id in payload.get("object_ids", []):
-                        if hasattr(action, "position") and action.position:
-                            start_x = action.position.x
-                            start_y = action.position.y
-                            break
+                spawn = getattr(obj, "position", None)
+                if spawn is not None:
+                    start_x = spawn.x
+                    start_y = spawn.y
+                else:
+                    for action in match.actions:
+                        if not action.player:
+                            continue
+                        payload = action.payload or {}
+                        if obj.instance_id in payload.get("object_ids", []):
+                            if hasattr(action, "position") and action.position:
+                                start_x = action.position.x
+                                start_y = action.position.y
+                                break
 
                 data["starting_units"].append(
                     {
