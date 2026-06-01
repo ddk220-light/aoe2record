@@ -1835,7 +1835,8 @@ class Renderer {
             pxY = radius * Math.sin(angle);
           }
           // A trebuchet the engine considers actively firing is blown up to 3×
-          // and tagged, so it's obvious it's "firing" even before projectiles.
+          // and draws a line to its target, so it's obvious what it's firing at
+          // even before projectiles.
           const firing = !!unit.firing;
           const scale = firing ? 3 : scaleOf.get(name) || 1;
 
@@ -1851,9 +1852,15 @@ class Renderer {
             scale,
           );
 
-          if (firing) {
+          if (firing && unit.firingTarget) {
             const pos = this.gameToCanvas(unit.x, unit.y);
-            this.drawFiringTag(pos.x + pxX, pos.y + pxY, baseSize * scale);
+            this.drawFiringLine(
+              pos.x + pxX,
+              pos.y + pxY,
+              unit.firingTarget.x,
+              unit.firingTarget.y,
+              this.playerColors[unit.player] || "#ff8000",
+            );
           }
         }
       }
@@ -1931,21 +1938,25 @@ class Renderer {
     }
   }
 
-  // Debug tag drawn under a trebuchet the engine thinks is firing.
-  drawFiringTag(cx, cy, sizePx) {
+  // Debug line from a firing trebuchet (screen px) to its target (game coords).
+  drawFiringLine(fx, fy, targetGameX, targetGameY, color) {
+    const to = this.gameToCanvas(targetGameX, targetGameY);
     const ctx = this.ctx;
-    const fontSize = Math.max(9, 11 * this.zoom);
     ctx.save();
-    ctx.font = `bold ${fontSize}px Arial`;
-    ctx.textAlign = "center";
-    ctx.textBaseline = "top";
-    const label = "FIRING";
-    const w = ctx.measureText(label).width;
-    const y = cy + sizePx / 2 + 3;
-    ctx.fillStyle = "rgba(0, 0, 0, 0.8)";
-    ctx.fillRect(cx - w / 2 - 3, y - 1, w + 6, fontSize + 3);
-    ctx.fillStyle = "#ffd24a";
-    ctx.fillText(label, cx, y);
+    ctx.globalAlpha = 0.9;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = Math.max(1.5, 2 * this.zoom);
+    ctx.setLineDash([6, 4]);
+    ctx.beginPath();
+    ctx.moveTo(fx, fy);
+    ctx.lineTo(to.x, to.y);
+    ctx.stroke();
+    // Solid dot at the target so the aim point is unambiguous.
+    ctx.setLineDash([]);
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(to.x, to.y, Math.max(2.5, 3.5 * this.zoom), 0, Math.PI * 2);
+    ctx.fill();
     ctx.restore();
   }
 
