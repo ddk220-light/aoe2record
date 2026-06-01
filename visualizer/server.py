@@ -501,6 +501,207 @@ def _extract_animals(match):
     return animals
 
 
+# ---- Building interactions (re-brighten a building when it's used) ----
+# Production/research actions identify a building only by an internal
+# instance_id and carry no map position. Instance_ids are assigned in creation
+# order, so within each building CLASS the k-th building a player builds gets
+# the k-th id. We infer each interacting building's class from what it
+# trains/researches, then pair it (by id order) to that player's BUILD orders
+# of the same class (by time) to recover its position. Buildings the player
+# never produces/researches from are simply never re-brightened.
+
+
+def _building_class(name):
+    """Map a BUILD building name to a coarse class (None = non-interactive)."""
+    n = (name or "").lower()
+    table = [
+        ("town cent", "tc"), ("barrack", "barracks"), ("archery", "range"),
+        ("stable", "stable"), ("siege", "siege"), ("dock", "dock"),
+        ("harbor", "dock"), ("monaster", "monastery"), ("castle", "castle"),
+        ("krepost", "castle"), ("donjon", "castle"), ("blacksmith", "blacksmith"),
+        ("market", "market"), ("univers", "university"),
+        ("mining camp", "miningcamp"), ("lumber camp", "lumbercamp"),
+        ("mill", "mill"), ("wonder", "wonder"),
+    ]
+    for kw, c in table:
+        if kw in n:
+            return c
+    return None  # house / farm / wall / tower / gate / outpost: never "used"
+
+
+def _unit_class(u):
+    """Class of the building that trains unit `u`."""
+    n = (u or "").lower()
+    if "fishing ship" in n:
+        return "dock"
+    if "villager" in n:
+        return "tc"
+    if "elephant archer" in n:
+        return "range"
+    if any(k in n for k in ["archer", "crossbow", "arbalest", "skirmisher",
+                            "slinger", "hand cannon", "genitour"]):
+        return "range"
+    if any(k in n for k in ["militia", "man-at-arms", "man at arms", "spearman",
+                            "pikeman", "halberdier", "eagle", "champion",
+                            "swordsman", "two-handed", "legionary", "condottiero"]):
+        return "barracks"
+    if any(k in n for k in ["scout", "knight", "cavalier", "paladin", "camel",
+                            "lancer", "hussar", "light cav", "battle elephant",
+                            "steppe", "shrivamsha", "cavalry"]):
+        return "stable"
+    if any(k in n for k in ["mangonel", "onager", "scorpion", " ram",
+                            "bombard cannon", "siege tower", "siege ram",
+                            "battering"]):
+        return "siege"
+    if any(k in n for k in ["monk", "missionary"]):
+        return "monastery"
+    if any(k in n for k in ["galley", "fire ship", "demolition", "transport",
+                            "cannon galleon", "caravel", "longboat",
+                            "turtle ship", "dromon", "thirisadai"]):
+        return "dock"
+    if any(k in n for k in ["trebuchet", "petard"]):
+        return "castle"
+    return "castle"  # unmatched trainable: almost always a Castle unique unit
+
+
+def _tech_class(t):
+    """Class of the building that researches tech `t` (None = unknown)."""
+    n = (t or "").lower()
+    table = [
+        (["feudal age", "castle age", "imperial age", "loom", "wheelbarrow",
+          "hand cart", "town watch", "town patrol"], "tc"),
+        (["forging", "iron casting", "blast furnace", "scale mail", "chain mail",
+          "plate mail", "scale barding", "chain barding", "plate barding",
+          "fletching", "bodkin", "bracer", "padded archer", "leather archer",
+          "ring archer"], "blacksmith"),
+        (["masonry", "architecture", "ballistics", "chemistry", "bombard tower",
+          "siege engineers", "treadmill", "murder holes", "heated shot",
+          "arrowslits", "fortified wall", "guard tower", "keep ", "conscription",
+          "spies"], "university"),
+        (["caravan", "guilds", "coinage", "banking"], "market"),
+        (["horse collar", "heavy plow", "crop rotation"], "mill"),
+        (["gold mining", "stone mining", "gold shaft", "stone shaft"], "miningcamp"),
+        (["double-bit", "double bit", "bow saw", "two-man", "two man saw"], "lumbercamp"),
+        (["redemption", "atonement", "herbal", "heresy", "sanctity", "fervor",
+          "faith", "illumination", "block printing", "theocracy"], "monastery"),
+        (["bloodlines", "husbandry"], "stable"),
+        (["thumb ring", "parthian"], "range"),
+        (["tracking", "squires", "arson", "supplies", "gambeson"], "barracks"),
+        (["capped ram", "siege ram", "heavy scorpion", "siege onager"], "siege"),
+        (["gillnets", "careening", "dry dock", "shipwright"], "dock"),
+    ]
+    for kws, c in table:
+        if any(k in n for k in kws):
+            return c
+    return None
+
+
+def _extract_building_interactions(match):
+    """List of {x, y, player, time}: each time a player used one of their
+    buildings (trained, researched, set a gather point, ordered a castle to
+    attack, etc.). x/y are the building's recovered tile position."""
+    from collections import Counter, defaultdict
+
+    def act_type(a):
+        return str(a.type).replace("Action.", "")
+
+    # BUILD orders grouped by (player, class), sorted by time -> positions.
+    builds = defaultdict(list)
+    for a in match.actions:
+        if not a.player or act_type(a) != "BUILD":
+            continue
+        c = _building_class((a.payload or {}).get("building"))
+        pos = getattr(a, "position", None)
+        if c and pos:
+            builds[(a.player.name, c)].append(
+                (a.timestamp.total_seconds(), round(pos.x), round(pos.y))
+            )
+    for k in builds:
+        builds[k].sort()
+
+    # Starting buildings (mainly the Town Center) are anchored directly by
+    # instance_id from player.objects, and excluded from BUILD pairing.
+    anchor = {}  # iid -> (player, x, y)
+    for pl in match.players:
+        for o in (pl.objects or []):
+            if _building_class(o.name):
+                pos = getattr(o, "position", None)
+                if pos:
+                    anchor[o.instance_id] = (pl.name, round(pos.x), round(pos.y))
+
+    # Per producing/researching iid: owner, what it makes, first-seen time.
+    prod = {}
+    for a in match.actions:
+        if not a.player:
+            continue
+        t = act_type(a)
+        if t not in ("DE_QUEUE", "RESEARCH"):
+            continue
+        ts = a.timestamp.total_seconds()
+        payload = a.payload or {}
+        for oid in payload.get("object_ids", []):
+            d = prod.setdefault(
+                oid, {"player": a.player.name, "units": Counter(),
+                      "techs": Counter(), "first": ts}
+            )
+            d["first"] = min(d["first"], ts)
+            if t == "DE_QUEUE":
+                d["units"][payload.get("unit")] += 1
+            else:
+                d["techs"][payload.get("technology")] += 1
+
+    def classify(d):
+        cc = Counter()
+        for u, k in d["units"].items():
+            c = _unit_class(u)
+            if c:
+                cc[c] += k
+        if cc:
+            return cc.most_common(1)[0][0]
+        for tech, k in d["techs"].items():
+            c = _tech_class(tech)
+            if c:
+                cc[c] += k
+        return cc.most_common(1)[0][0] if cc else None
+
+    # Bucket interacting iids by (player, class), excluding starting anchors.
+    buckets = defaultdict(list)
+    for iid, d in prod.items():
+        if iid in anchor:
+            continue
+        c = classify(d)
+        if c:
+            buckets[(d["player"], c)].append(iid)
+
+    # Pair iids (creation order) to BUILD positions (time order) of same class.
+    iid_pos = dict(anchor)  # iid -> (player, x, y)
+    for key, iids in buckets.items():
+        iids.sort()  # ascending id == build order
+        bl = builds.get(key, [])
+        for i, iid in enumerate(iids):
+            if i < len(bl):
+                iid_pos[iid] = (key[0], bl[i][1], bl[i][2])
+
+    # Any action whose object_ids names a positioned building is an interaction.
+    interactions = []
+    seen = set()
+    for a in match.actions:
+        if not a.player:
+            continue
+        ts = a.timestamp.total_seconds()
+        for oid in (a.payload or {}).get("object_ids", []):
+            loc = iid_pos.get(oid)
+            if not loc:
+                continue
+            player, x, y = loc
+            kdup = (oid, round(ts, 2))
+            if kdup in seen:
+                continue
+            seen.add(kdup)
+            interactions.append({"x": x, "y": y, "player": player, "time": ts})
+    return interactions
+
+
 def process_replay(replay_file):
     """Process a replay file and return JSON data."""
 
@@ -601,7 +802,15 @@ def process_replay(replay_file):
         "actions": [],
         "walls": [],
         "unit_deaths": {},
+        "building_interactions": [],
     }
+
+    # Recover when each (built) building was used, to re-brighten it on activity.
+    try:
+        data["building_interactions"] = _extract_building_interactions(match)
+    except Exception as e:
+        app.logger.warning(f"building interaction extraction failed: {e}")
+        data["building_interactions"] = []
 
     # Starting-map backdrop: terrain grid + GAIA resource/tree objects.
     try:

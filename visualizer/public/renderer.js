@@ -1684,8 +1684,8 @@ class Renderer {
       if (age < 30) {
         opacity = 1; // Full opacity for first 30 seconds
       } else if (age < 300) {
-        // Fade from 50% to 25% between 30s and 5 minutes
-        opacity = 0.5 - ((age - 30) / 270) * 0.25;
+        // Smooth fade from 1.0 down to 0.25 between 30s and 5 minutes
+        opacity = 1 - ((age - 30) / 270) * 0.75;
       } else {
         opacity = 0.25; // 25% after 5 minutes
       }

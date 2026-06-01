@@ -178,6 +178,44 @@ class Playback {
 
     // Sort building events by time
     this.buildingEvents.sort((a, b) => a.time - b.time);
+
+    // Building interactions: when a player used a building (trained, researched,
+    // set a gather point, castle attack, ...). Keyed the same way buildings are
+    // keyed in getState (player + rounded tile) -> sorted list of use times, so
+    // a building can be re-brightened from the moment it was last interacted.
+    this.buildingInteractions = new Map();
+    for (const it of this.data.building_interactions || []) {
+      const key = `${it.player}_${Math.round(it.x)}_${Math.round(it.y)}`;
+      if (!this.buildingInteractions.has(key)) {
+        this.buildingInteractions.set(key, []);
+      }
+      this.buildingInteractions.get(key).push(it.time);
+    }
+    for (const times of this.buildingInteractions.values()) {
+      times.sort((a, b) => a - b);
+    }
+  }
+
+  // Latest interaction time <= `t` for a building key, or null. Binary search
+  // over the per-building sorted time list.
+  lastInteractionBefore(key, t) {
+    const times = this.buildingInteractions
+      ? this.buildingInteractions.get(key)
+      : null;
+    if (!times || times.length === 0) return null;
+    let lo = 0,
+      hi = times.length - 1,
+      ans = null;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (times[mid] <= t) {
+        ans = times[mid];
+        lo = mid + 1;
+      } else {
+        hi = mid - 1;
+      }
+    }
+    return ans;
   }
 
   // ---- Pathfinding: obstacle grid + A* so units route around static obstacles ----
@@ -957,7 +995,14 @@ class Playback {
 
         if (!deleted) {
           const key = `${event.type}_${event.player}_${roundedX}_${roundedY}`;
-          const buildingAge = this.currentTime - event.time;
+          // Age is measured from the most recent activity on this building: its
+          // placement, or a later interaction (production/research/etc.). This
+          // makes a building snap back to full opacity whenever it's used.
+          const useKey = `${event.player}_${roundedX}_${roundedY}`;
+          const lastUse = this.lastInteractionBefore(useKey, this.currentTime);
+          const origin =
+            lastUse != null && lastUse > event.time ? lastUse : event.time;
+          const buildingAge = this.currentTime - origin;
           currentBuildings.set(key, {
             x: event.x,
             y: event.y,
