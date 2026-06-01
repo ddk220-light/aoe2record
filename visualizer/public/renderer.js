@@ -1253,12 +1253,10 @@ class Renderer {
   // clipped to the map and to the midline against nearby other players.
   computeAllBases(buildings) {
     const byPlayer = new Map();
-    const all = [];
     for (const [, b] of buildings) {
       if (b.x == null || b.y == null) continue;
       if (!byPlayer.has(b.player)) byPlayer.set(b.player, []);
       byPlayer.get(b.player).push(b);
-      all.push(b);
     }
 
     const dim = this.mapSize;
@@ -1283,8 +1281,6 @@ class Renderer {
         if (hull.length < 3) continue;
         let poly = this.bufferHull(hull, this.BASE_BUFFER);
         poly = this.clipToMap(poly, dim); // keep inside the map
-        if (poly.length < 3) continue;
-        poly = this.clipAgainstOthers(poly, cl, all, player); // no overlap
         if (poly.length < 3) continue;
 
         let cx = 0, cy = 0;
@@ -1336,32 +1332,6 @@ class Renderer {
     poly = this.clipByLinear(poly, (p) => p.x - dim);
     poly = this.clipByLinear(poly, (p) => -p.y);
     poly = this.clipByLinear(poly, (p) => p.y - dim);
-    return poly;
-  }
-
-  // Trim the polygon so it never crosses the midline toward another player's
-  // buildings — keeps neighbouring bases from overlapping. For each enemy
-  // building we clip to the half-plane closer to our nearest building than to it
-  // (a Voronoi-style cell), so two bases always meet cleanly at the midline.
-  clipAgainstOthers(poly, cluster, allBuildings, player) {
-    for (const q of allBuildings) {
-      if (q.player === player) continue;
-      // nearest of our buildings to this enemy building
-      let best = Infinity, m = null;
-      for (const b of cluster) {
-        const dx = b.x - q.x, dy = b.y - q.y;
-        const d = dx * dx + dy * dy;
-        if (d < best) {
-          best = d;
-          m = b;
-        }
-      }
-      if (m === null) continue;
-      const midx = (m.x + q.x) / 2, midy = (m.y + q.y) / 2;
-      const vx = q.x - m.x, vy = q.y - m.y;
-      poly = this.clipByLinear(poly, (p) => (p.x - midx) * vx + (p.y - midy) * vy);
-      if (poly.length < 3) break;
-    }
     return poly;
   }
 
