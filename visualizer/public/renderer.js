@@ -74,6 +74,8 @@ class Renderer {
     this.spritesLoaded = false;
     this.spriteData = null;
     this.spriteImages = {}; // Cache loaded sprite images
+    // Unit types whose icon lives under a different (closest-match) sprite name.
+    this.spriteAlias = { camelscout: "camelrider" };
 
     this.setupCanvas();
     this.setupEventListeners();
@@ -550,16 +552,26 @@ class Renderer {
     const color = this.playerColors[player] || "#ffffff";
 
     // A unit occupies at most one tile: its diameter fits within the tile's
-    // short diagonal (tileHeight). Size is uniform across all types — type
-    // classification isn't yet reliable, so we deliberately don't let it leak
-    // into the visual (a mislabeled knight must not render villager-sized).
+    // short diagonal (tileHeight). Uniform size across all types.
     const tileShort = this.tileHeight * this.zoom;
     const size = Math.max(3, tileShort * 0.9 * 1.25);
 
-    // Every unit is drawn as a generic player-colored circle. No sprites, no
-    // per-type shapes, and no text labels — those are intentionally deferred
-    // (icons will come back later) so the map stays clean and so misidentified
-    // units don't show as the wrong shape or size.
+    // Villagers stay as plain player-colored dots. Military units show their
+    // unit icon on a player-colored circle. A unit with no matching icon falls
+    // back to a plain circle too — never a geometric shape, never a text label.
+    const actualType = unitName ? this.extractUnitType(unitName) : type;
+    let sprite = null;
+    if (actualType && actualType !== "villager") {
+      sprite =
+        this.getSprite(actualType) ||
+        this.getSprite(this.spriteAlias[actualType]);
+    }
+
+    if (sprite) {
+      this.drawSpriteWithPlayerColor(pos.x, pos.y, sprite, color, size, opacity);
+      return;
+    }
+
     this.ctx.globalAlpha = opacity;
     this.ctx.fillStyle = color;
     this.ctx.beginPath();
