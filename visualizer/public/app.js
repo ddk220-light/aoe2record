@@ -434,7 +434,11 @@ class App {
     this.renderer = new Renderer(this.canvas, this.data.match.map_size);
     this.renderer.setPlayerColors(this.data.players);
     // Starting-map backdrop (terrain + resources), if the server provided it.
-    this.renderer.setMapData(this.data.terrain, this.data.map_objects);
+    this.renderer.setMapData(
+      this.data.terrain,
+      this.data.map_objects,
+      this.data.animals,
+    );
 
     // Initialize playback
     this.playback = new Playback(this.data);

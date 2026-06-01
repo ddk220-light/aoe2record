@@ -333,9 +333,12 @@ class Renderer {
   // Draw the base map as a diamond
   // Receive the starting-map data (terrain grid + GAIA objects) and pre-render
   // it once to an offscreen canvas used as the static map backdrop.
-  setMapData(terrain, mapObjects) {
+  setMapData(terrain, mapObjects, animals) {
     this.terrain = terrain || null;
     this.mapObjects = mapObjects || null;
+    // Huntable/herdable animals are drawn live (not baked) so each can vanish
+    // once a player takes control of it (currentTime >= gone_at).
+    this.animals = animals || null;
     this.mapLayer = null;
     if (this.terrain && this.terrain.ids) {
       this.buildMapLayer();
@@ -1168,10 +1171,48 @@ class Renderer {
     this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
   }
 
+  // Starting GAIA animals (sheep / boar / deer) drawn as small icon tiles.
+  // Each disappears once a player takes control of it (currentTime >= gone_at),
+  // mirroring the game where it is herded or hunted and is no longer neutral.
+  ANIMAL_STYLES = {
+    sheep: { border: "#e8e2cf", glyph: "🐑" },
+    boar: { border: "#6b4a30", glyph: "🐗" },
+    deer: { border: "#c79a5b", glyph: "🦌" },
+  };
+
+  drawAnimals(currentTime) {
+    if (!this.animals || !this.animals.length) return;
+    const ctx = this.ctx;
+
+    const size = Math.max(7, this.tileHeight * this.zoom * 1.5);
+    const half = size / 2;
+    ctx.save();
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.font = `${Math.round(size * 0.78)}px sans-serif`;
+    ctx.lineWidth = Math.max(1, size * 0.08);
+
+    for (const a of this.animals) {
+      if (a.gone_at != null && currentTime >= a.gone_at) continue; // taken/hunted
+      const p = this.gameToCanvas(a.x, a.y);
+      const s = this.ANIMAL_STYLES[a.c] || this.ANIMAL_STYLES.deer;
+      // Square tile backing so the icon reads against any terrain.
+      ctx.fillStyle = "rgba(255, 255, 255, 0.82)";
+      ctx.strokeStyle = s.border;
+      ctx.fillRect(p.x - half, p.y - half, size, size);
+      ctx.strokeRect(p.x - half, p.y - half, size, size);
+      ctx.fillText(s.glyph, p.x, p.y + size * 0.06);
+    }
+    ctx.restore();
+  }
+
   // Full render cycle
   render(state) {
     this.clear();
     this.drawMap();
+
+    // Starting animals sit on the ground, below walls/buildings/units.
+    this.drawAnimals(state.currentTime || 0);
 
     // Draw walls first (below buildings and units)
     for (const wall of state.walls || []) {

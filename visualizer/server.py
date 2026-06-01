@@ -410,6 +410,24 @@ _OBJ_CATEGORIES = (
     ("tree", ("tree", "snag", "stump")),
 )
 
+# Huntable / herdable GAIA animals are drawn dynamically (so they can vanish the
+# moment a player takes control), not baked into the static backdrop.
+_ANIMAL_DOT_CATS = {"boar", "hunt", "sheep"}
+
+# Map an object name to one of the three icon buckets the frontend draws.
+_ANIMAL_ICON_CATS = (
+    ("boar", ("boar", "rhino", "elephant", "javelina")),
+    ("deer", ("deer", "ibex", "goose", "gazelle", "zebra", "ostrich", "stag", "crocodile", "emu", "elk")),
+    ("sheep", ("sheep", "turkey", "llama", "goat", "cow", "buffalo", "pig")),
+)
+
+
+def _classify_animal(name):
+    n = (name or "").lower()
+    if not n:
+        return None
+    return next((c for c, kws in _ANIMAL_ICON_CATS if any(k in n for k in kws)), None)
+
 
 def _extract_map_objects(match):
     """Resource/tree/relic GAIA objects at game start: [{c, x, y}]."""
@@ -419,13 +437,52 @@ def _extract_map_objects(match):
         if not n:
             continue
         cat = next((c for c, kws in _OBJ_CATEGORIES if any(k in n for k in kws)), None)
-        if cat is None or cat == "tree":
-            continue  # forests are drawn from terrain, not per-tree dots
+        if cat is None or cat == "tree" or cat in _ANIMAL_DOT_CATS:
+            continue  # forests come from terrain; animals are drawn dynamically
         p = getattr(g, "position", None)
         if p is None:
             continue
         out.append({"c": cat, "x": round(p.x, 1), "y": round(p.y, 1)})
     return out
+
+
+def _extract_animals(match):
+    """Huntable/herdable GAIA animals present at game start, each tagged with the
+    time it first comes under a player's control (gone_at). Sheep get commanded
+    (their id shows up as an action actor); boar/deer get attacked (their id is
+    the action target). After gone_at the frontend stops drawing them, matching
+    the game where the animal is converted/killed and no longer neutral."""
+    animals = []
+    by_id = {}
+    for g in getattr(match, "gaia", None) or []:
+        cat = _classify_animal(getattr(g, "name", None))
+        if cat is None:
+            continue
+        p = getattr(g, "position", None)
+        if p is None:
+            continue
+        a = {"c": cat, "x": round(p.x, 1), "y": round(p.y, 1), "gone_at": None}
+        animals.append(a)
+        iid = getattr(g, "instance_id", None)
+        if iid is not None:
+            by_id[iid] = a
+
+    if by_id:
+        def _touch(a, ts):
+            if a is not None and (a["gone_at"] is None or ts < a["gone_at"]):
+                a["gone_at"] = ts
+
+        for action in match.actions:
+            try:
+                ts = action.timestamp.total_seconds()
+            except Exception:
+                continue
+            payload = action.payload or {}
+            for oid in payload.get("object_ids", []) or []:
+                _touch(by_id.get(oid), ts)
+            _touch(by_id.get(payload.get("target_id")), ts)
+
+    return animals
 
 
 def process_replay(replay_file):
@@ -535,10 +592,12 @@ def process_replay(replay_file):
         data["match"]["map_size"] = match.map.dimension
         data["terrain"] = _extract_terrain(match)
         data["map_objects"] = _extract_map_objects(match)
+        data["animals"] = _extract_animals(match)
     except Exception as e:
         app.logger.warning(f"terrain/object extraction failed: {e}")
         data["terrain"] = None
         data["map_objects"] = []
+        data["animals"] = []
 
     # Add players
     for player in match.players:
