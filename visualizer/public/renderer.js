@@ -1938,6 +1938,27 @@ class Renderer {
         this.drawImpactFlash(to.x, to.y, (p - 0.88) / 0.12);
       }
 
+      // Debug: bold line from the treb to the shot's current spot + a label,
+      // so the projectile is unmistakable.
+      ctx.save();
+      ctx.strokeStyle = "#ff2a00";
+      ctx.lineWidth = Math.max(2, 2.5 * this.zoom);
+      ctx.beginPath();
+      ctx.moveTo(from.x, from.y);
+      ctx.lineTo(pt.x, pt.y);
+      ctx.stroke();
+      const fontSize = Math.max(10, 11 * this.zoom);
+      ctx.font = `bold ${fontSize}px Arial`;
+      ctx.textAlign = "left";
+      ctx.textBaseline = "bottom";
+      const label = `SHOT ${p.toFixed(2)}`;
+      const w = ctx.measureText(label).width;
+      ctx.fillStyle = "rgba(0,0,0,0.8)";
+      ctx.fillRect(pt.x + 8, pt.y - fontSize - 5, w + 6, fontSize + 4);
+      ctx.fillStyle = "#ffd24a";
+      ctx.fillText(label, pt.x + 11, pt.y - 3);
+      ctx.restore();
+
       ctx.save();
       // Motion trail: a few fading balls behind the head along the arc.
       for (let i = 4; i >= 1; i--) {
