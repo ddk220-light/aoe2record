@@ -308,8 +308,19 @@ class Renderer {
   }
 
   setPlayerColors(players) {
+    this.playerTeams = {};
     players.forEach((p) => {
       this.playerColors[p.name] = p.color_hex;
+    });
+    // Assign a stable team number per distinct team roster (FFA -> own team).
+    const keyToNum = new Map();
+    let next = 1;
+    players.forEach((p) => {
+      const roster = p.team && p.team.length ? p.team.slice() : [p.name];
+      if (!roster.includes(p.name)) roster.push(p.name);
+      const key = roster.slice().sort().join("|");
+      if (!keyToNum.has(key)) keyToNum.set(key, next++);
+      this.playerTeams[p.name] = keyToNum.get(key);
     });
   }
 
@@ -1208,45 +1219,166 @@ class Renderer {
   // A base is a cluster of >= MIN_BASE_BUILDINGS buildings near each other; it
   // grows as more buildings are placed nearby. Its boundary is drawn as a dotted
   // line in the player's colour, BASE_BUFFER tiles out from the outer buildings.
-  BASE_LINK_DIST = 12; // tiles: buildings within this of the cluster join it
+  BASE_LINK_DIST = 18; // tiles: buildings within this of the cluster join it
   MIN_BASE_BUILDINGS = 5;
   BASE_BUFFER = 5; // tiles of margin around the outer buildings
   BUILDING_HALF = 1.5; // approx building half-footprint (tiles) for hull corners
 
   drawBaseBoundaries(state) {
     if (!state || !state.buildings || state.buildings.size === 0) return;
-    if (!this._baseCache) this._baseCache = new Map();
 
-    // Group currently-visible buildings by player.
-    const byPlayer = new Map();
+    // Recompute only when the visible building set changes (global signature,
+    // since one player's boundary depends on nearby players' buildings too).
+    let cnt = 0, sx = 0, sy = 0;
     for (const [, b] of state.buildings) {
+      if (b.x == null || b.y == null) continue;
+      cnt++;
+      sx += b.x;
+      sy += b.y;
+    }
+    const sig = `${cnt}:${Math.round(sx)}:${Math.round(sy)}`;
+    if (this._baseSig !== sig) {
+      this._bases = this.computeAllBases(state.buildings);
+      this._baseSig = sig;
+    }
+
+    for (const base of this._bases) this.drawDottedPolygon(base.poly, base.color);
+    // Labels on top of all outlines.
+    for (const base of this._bases) {
+      this.drawBaseLabel(base.center, base.label, base.color);
+    }
+  }
+
+  // Compute every base outline for every player: cluster -> buffered hull ->
+  // clipped to the map and to the midline against nearby other players.
+  computeAllBases(buildings) {
+    const byPlayer = new Map();
+    const all = [];
+    for (const [, b] of buildings) {
       if (b.x == null || b.y == null) continue;
       if (!byPlayer.has(b.player)) byPlayer.set(b.player, []);
       byPlayer.get(b.player).push(b);
+      all.push(b);
     }
 
+    const dim = this.mapSize;
+    const h = this.BUILDING_HALF;
+    const bases = [];
     for (const [player, bldgs] of byPlayer) {
       if (bldgs.length < this.MIN_BASE_BUILDINGS) continue;
-
-      // Cheap signature so we only recompute when this player's set changes.
-      let sumx = 0, sumy = 0;
-      for (const b of bldgs) {
-        sumx += b.x;
-        sumy += b.y;
-      }
-      const sig = `${bldgs.length}:${Math.round(sumx)}:${Math.round(sumy)}`;
-      const cached = this._baseCache.get(player);
-      let polys;
-      if (cached && cached.sig === sig) {
-        polys = cached.polys;
-      } else {
-        polys = this.computeBasePolys(bldgs);
-        this._baseCache.set(player, { sig, polys });
-      }
-
       const color = this.playerColors[player] || "#ffffff";
-      for (const poly of polys) this.drawDottedPolygon(poly, color);
+      const team = this.playerTeams ? this.playerTeams[player] : null;
+      const label = team ? `${player} · Team ${team}` : player;
+
+      for (const cl of this.clusterBuildings(bldgs, this.BASE_LINK_DIST)) {
+        if (cl.length < this.MIN_BASE_BUILDINGS) continue;
+        const pts = [];
+        for (const b of cl) {
+          pts.push(
+            { x: b.x - h, y: b.y - h }, { x: b.x + h, y: b.y - h },
+            { x: b.x + h, y: b.y + h }, { x: b.x - h, y: b.y + h },
+          );
+        }
+        const hull = this.convexHull(pts);
+        if (hull.length < 3) continue;
+        let poly = this.bufferHull(hull, this.BASE_BUFFER);
+        poly = this.clipToMap(poly, dim); // keep inside the map
+        if (poly.length < 3) continue;
+        poly = this.clipAgainstOthers(poly, cl, all, player); // no overlap
+        if (poly.length < 3) continue;
+
+        let cx = 0, cy = 0;
+        for (const b of cl) {
+          cx += b.x;
+          cy += b.y;
+        }
+        bases.push({
+          player,
+          color,
+          poly,
+          center: { x: cx / cl.length, y: cy / cl.length },
+          label,
+        });
+      }
     }
+    return bases;
+  }
+
+  // Clip a convex polygon by the half-plane f(point) <= 0 (Sutherland-Hodgman).
+  clipByLinear(poly, f) {
+    if (poly.length === 0) return poly;
+    const out = [];
+    const n = poly.length;
+    for (let i = 0; i < n; i++) {
+      const cur = poly[i];
+      const prev = poly[(i + n - 1) % n];
+      const fc = f(cur);
+      const fp = f(prev);
+      const curIn = fc <= 0;
+      const prevIn = fp <= 0;
+      if (curIn) {
+        if (!prevIn) {
+          const t = fp / (fp - fc);
+          out.push({ x: prev.x + (cur.x - prev.x) * t, y: prev.y + (cur.y - prev.y) * t });
+        }
+        out.push(cur);
+      } else if (prevIn) {
+        const t = fp / (fp - fc);
+        out.push({ x: prev.x + (cur.x - prev.x) * t, y: prev.y + (cur.y - prev.y) * t });
+      }
+    }
+    return out;
+  }
+
+  // Keep the polygon within the [0, dim] map square.
+  clipToMap(poly, dim) {
+    poly = this.clipByLinear(poly, (p) => -p.x);
+    poly = this.clipByLinear(poly, (p) => p.x - dim);
+    poly = this.clipByLinear(poly, (p) => -p.y);
+    poly = this.clipByLinear(poly, (p) => p.y - dim);
+    return poly;
+  }
+
+  // Trim the polygon so it never crosses the midline toward another player's
+  // buildings — keeps neighbouring bases from overlapping. For each enemy
+  // building we clip to the half-plane closer to our nearest building than to it
+  // (a Voronoi-style cell), so two bases always meet cleanly at the midline.
+  clipAgainstOthers(poly, cluster, allBuildings, player) {
+    for (const q of allBuildings) {
+      if (q.player === player) continue;
+      // nearest of our buildings to this enemy building
+      let best = Infinity, m = null;
+      for (const b of cluster) {
+        const dx = b.x - q.x, dy = b.y - q.y;
+        const d = dx * dx + dy * dy;
+        if (d < best) {
+          best = d;
+          m = b;
+        }
+      }
+      if (m === null) continue;
+      const midx = (m.x + q.x) / 2, midy = (m.y + q.y) / 2;
+      const vx = q.x - m.x, vy = q.y - m.y;
+      poly = this.clipByLinear(poly, (p) => (p.x - midx) * vx + (p.y - midy) * vy);
+      if (poly.length < 3) break;
+    }
+    return poly;
+  }
+
+  // Player name + team at the base centre, in the player's colour.
+  drawBaseLabel(center, text, color) {
+    const ctx = this.ctx;
+    const p = this.gameToCanvas(center.x, center.y);
+    ctx.save();
+    ctx.font = "bold 13px sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = "rgba(0, 0, 0, 0.8)";
+    ctx.strokeText(text, p.x, p.y);
+    ctx.fillStyle = color;
+    ctx.fillText(text, p.x, p.y);
+    ctx.restore();
   }
 
   // Union-find single-linkage clustering of buildings by centre distance.
@@ -1275,30 +1407,6 @@ class Renderer {
       groups.get(r).push(bldgs[i]);
     }
     return [...groups.values()];
-  }
-
-  // For each qualifying cluster, the buffered convex-hull outline (game coords).
-  computeBasePolys(bldgs) {
-    const clusters = this.clusterBuildings(bldgs, this.BASE_LINK_DIST);
-    const polys = [];
-    const h = this.BUILDING_HALF;
-    for (const cl of clusters) {
-      if (cl.length < this.MIN_BASE_BUILDINGS) continue;
-      // Hull over each building's footprint corners so the boundary clears their extent.
-      const pts = [];
-      for (const b of cl) {
-        pts.push(
-          { x: b.x - h, y: b.y - h },
-          { x: b.x + h, y: b.y - h },
-          { x: b.x + h, y: b.y + h },
-          { x: b.x - h, y: b.y + h },
-        );
-      }
-      const hull = this.convexHull(pts);
-      if (hull.length < 3) continue; // degenerate (collinear) — skip
-      polys.push(this.bufferHull(hull, this.BASE_BUFFER));
-    }
-    return polys;
   }
 
   // Convex hull (Andrew's monotone chain). Returns ordered hull vertices.
