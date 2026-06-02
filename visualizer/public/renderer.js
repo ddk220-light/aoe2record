@@ -947,6 +947,19 @@ class Renderer {
     const footprint = this.buildingFootprint(spriteType, typeClean);
     const size = footprint * this.tileWidth * this.zoom;
 
+    // Landmark buildings are drawn as procedural isometric 3D structures (no
+    // sprite image) so their silhouette reads at a glance: the town centre's
+    // central keep + barn wings + courtyard, the castle's crenellated tiers and
+    // round/square corner towers.
+    if (spriteType === "towncenter") {
+      this.drawTownCenter3D(pos.x, pos.y, footprint, color, opacity);
+      return;
+    }
+    if (spriteType === "castle") {
+      this.drawCastle3D(pos.x, pos.y, footprint, color, opacity);
+      return;
+    }
+
     // Tall structures (TC / castle / towers) sit on a raised iso block; their
     // sprite/shape is drawn elevated onto the top of it.
     const heightPx =
@@ -1044,109 +1057,405 @@ class Renderer {
     this.ctx.strokeStyle = "rgba(0, 0, 0, 0.7)";
   }
 
-  // Town Center - large building with flag
-  drawTownCenter(x, y, color) {
-    const size = this.sizes.towncenter * this.zoom;
-    const halfW = size / 2;
-    const halfH = size / 4;
+  // ---- Procedural isometric building primitives -------------------------
+  //
+  // All of these work in screen space. A footprint diamond centred at screen
+  // (cx, cy) has half-extents halfW (along the L<->R screen axis) and halfH
+  // (along the T<->B axis); elevations are measured in canvas px upward from
+  // the ground centre, so blocks can be stacked into tiers.
 
-    // Main building (isometric box shape)
-    this.ctx.beginPath();
-    this.ctx.moveTo(x, y - halfH);
-    this.ctx.lineTo(x + halfW, y);
-    this.ctx.lineTo(x, y + halfH);
-    this.ctx.lineTo(x - halfW, y);
-    this.ctx.closePath();
-    this.ctx.fill();
-    this.ctx.stroke();
+  // Draw an isometric box: its top cap plus the two viewer-facing vertical
+  // faces (left = L->B edge, right = B->R edge). Returns the four top-cap
+  // corners [x,y] so callers can add roofs / crenellations on top.
+  _isoBox(cx, cyGround, halfW, halfH, elevBottom, elevTop, colors, opacity) {
+    const ctx = this.ctx;
+    const yB = cyGround - elevBottom;
+    const yT = cyGround - elevTop;
+    const Lb = [cx - halfW, yB];
+    const Bb = [cx, yB + halfH];
+    const Rb = [cx + halfW, yB];
+    const Lt = [cx - halfW, yT];
+    const Tt = [cx, yT - halfH];
+    const Rt = [cx + halfW, yT];
+    const Bt = [cx, yT + halfH];
 
-    // Roof (darker shade)
-    const roofHeight = size / 3;
-    this.ctx.fillStyle = this.darkenColor(color, 0.3);
-    this.ctx.beginPath();
-    this.ctx.moveTo(x, y - halfH - roofHeight);
-    this.ctx.lineTo(x + halfW * 0.8, y - halfH * 0.3);
-    this.ctx.lineTo(x, y - halfH + roofHeight * 0.5);
-    this.ctx.lineTo(x - halfW * 0.8, y - halfH * 0.3);
-    this.ctx.closePath();
-    this.ctx.fill();
-    this.ctx.stroke();
+    ctx.save();
+    ctx.globalAlpha = opacity;
+    ctx.lineJoin = "round";
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = "rgba(0,0,0,0.5)";
 
-    // Flag pole
-    this.ctx.strokeStyle = "#8B4513";
-    this.ctx.lineWidth = 2 * this.zoom;
-    this.ctx.beginPath();
-    this.ctx.moveTo(x, y - halfH - roofHeight);
-    this.ctx.lineTo(x, y - halfH - roofHeight - size / 3);
-    this.ctx.stroke();
+    // left vertical face
+    ctx.fillStyle = colors.left;
+    ctx.beginPath();
+    ctx.moveTo(Lb[0], Lb[1]);
+    ctx.lineTo(Bb[0], Bb[1]);
+    ctx.lineTo(Bt[0], Bt[1]);
+    ctx.lineTo(Lt[0], Lt[1]);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
 
-    // Flag
-    this.ctx.fillStyle = color;
-    this.ctx.beginPath();
-    this.ctx.moveTo(x, y - halfH - roofHeight - size / 3);
-    this.ctx.lineTo(x + size / 4, y - halfH - roofHeight - size / 4);
-    this.ctx.lineTo(x, y - halfH - roofHeight - size / 6);
-    this.ctx.closePath();
-    this.ctx.fill();
+    // right vertical face
+    ctx.fillStyle = colors.right;
+    ctx.beginPath();
+    ctx.moveTo(Bb[0], Bb[1]);
+    ctx.lineTo(Rb[0], Rb[1]);
+    ctx.lineTo(Rt[0], Rt[1]);
+    ctx.lineTo(Bt[0], Bt[1]);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
 
-    this.ctx.strokeStyle = "rgba(0, 0, 0, 0.7)";
-    this.ctx.lineWidth = 1;
+    // top cap
+    ctx.fillStyle = colors.top;
+    ctx.beginPath();
+    ctx.moveTo(Lt[0], Lt[1]);
+    ctx.lineTo(Tt[0], Tt[1]);
+    ctx.lineTo(Rt[0], Rt[1]);
+    ctx.lineTo(Bt[0], Bt[1]);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.restore();
+    return { Lt, Tt, Rt, Bt };
   }
 
-  // Castle - fortress with towers
-  drawCastle(x, y, color) {
-    const size = this.sizes.castle * this.zoom;
-    const halfW = size / 2;
-    const halfH = size / 4;
+  // Stand crenellations (alternating merlons of height `mh`) up along a screen
+  // edge p1 -> p2.
+  _crenellateEdge(p1, p2, mh, n, side, opacity) {
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.globalAlpha = opacity;
+    ctx.lineJoin = "round";
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = "rgba(0,0,0,0.5)";
+    ctx.fillStyle = side;
+    const segs = n * 2 - 1;
+    for (let i = 0; i < segs; i += 2) {
+      const a = i / segs;
+      const b = (i + 1) / segs;
+      const ax = p1[0] + (p2[0] - p1[0]) * a;
+      const ay = p1[1] + (p2[1] - p1[1]) * a;
+      const bx = p1[0] + (p2[0] - p1[0]) * b;
+      const by = p1[1] + (p2[1] - p1[1]) * b;
+      ctx.beginPath();
+      ctx.moveTo(ax, ay);
+      ctx.lineTo(bx, by);
+      ctx.lineTo(bx, by - mh);
+      ctx.lineTo(ax, ay - mh);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
 
-    // Main keep (center)
-    this.ctx.beginPath();
-    this.ctx.moveTo(x, y - halfH);
-    this.ctx.lineTo(x + halfW, y);
-    this.ctx.lineTo(x, y + halfH);
-    this.ctx.lineTo(x - halfW, y);
-    this.ctx.closePath();
-    this.ctx.fill();
-    this.ctx.stroke();
+  // Pyramidal (hip) roof over a top diamond given by its corners. Returns the
+  // peak point.
+  _hipRoof(corners, peakH, leftColor, rightColor, opacity) {
+    const ctx = this.ctx;
+    const { Lt, Tt, Rt, Bt } = corners;
+    const cx = (Lt[0] + Rt[0]) / 2;
+    const cy = (Lt[1] + Rt[1]) / 2;
+    const peak = [cx, cy - peakH];
 
-    // Tower positions (4 corners)
-    const towerSize = size / 4;
-    const towerHeight = size / 3;
-    const towers = [
-      { dx: -halfW * 0.7, dy: 0 }, // Left
-      { dx: halfW * 0.7, dy: 0 }, // Right
-      { dx: 0, dy: -halfH * 0.8 }, // Top
-      { dx: 0, dy: halfH * 0.8 }, // Bottom
-    ];
+    ctx.save();
+    ctx.globalAlpha = opacity;
+    ctx.lineJoin = "round";
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = "rgba(0,0,0,0.5)";
 
-    // Draw towers
-    this.ctx.fillStyle = this.darkenColor(color, 0.2);
-    for (const tower of towers) {
-      const tx = x + tower.dx;
-      const ty = y + tower.dy;
+    // back faces (mostly hidden behind the ridge)
+    ctx.fillStyle = this.darkenColor(leftColor, 0.12);
+    ctx.beginPath();
+    ctx.moveTo(Lt[0], Lt[1]);
+    ctx.lineTo(Tt[0], Tt[1]);
+    ctx.lineTo(peak[0], peak[1]);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(Tt[0], Tt[1]);
+    ctx.lineTo(Rt[0], Rt[1]);
+    ctx.lineTo(peak[0], peak[1]);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
 
-      // Tower base
-      this.ctx.beginPath();
-      this.ctx.arc(tx, ty, towerSize / 2, 0, Math.PI * 2);
-      this.ctx.fill();
-      this.ctx.stroke();
+    // front-left face
+    ctx.fillStyle = leftColor;
+    ctx.beginPath();
+    ctx.moveTo(Lt[0], Lt[1]);
+    ctx.lineTo(Bt[0], Bt[1]);
+    ctx.lineTo(peak[0], peak[1]);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
 
-      // Tower top (crenellations implied by darker top)
-      this.ctx.fillStyle = this.darkenColor(color, 0.4);
-      this.ctx.beginPath();
-      this.ctx.arc(tx, ty - towerHeight / 3, towerSize / 3, 0, Math.PI * 2);
-      this.ctx.fill();
-      this.ctx.fillStyle = this.darkenColor(color, 0.2);
+    // front-right face
+    ctx.fillStyle = rightColor;
+    ctx.beginPath();
+    ctx.moveTo(Bt[0], Bt[1]);
+    ctx.lineTo(Rt[0], Rt[1]);
+    ctx.lineTo(peak[0], peak[1]);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.restore();
+    return peak;
+  }
+
+  // Round tower (cylinder) with a crenellated top rim.
+  _roundTower(px, py, rx, H, body, topColor, crenH, opacity) {
+    const ctx = this.ctx;
+    const ry = rx * 0.5;
+    const yTop = py - H;
+
+    ctx.save();
+    ctx.globalAlpha = opacity;
+    ctx.lineJoin = "round";
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = "rgba(0,0,0,0.5)";
+
+    // cylinder body: up the left side, across the (hidden) top, down the right
+    // side, then the front-bottom bulge back to the start
+    ctx.fillStyle = body;
+    ctx.beginPath();
+    ctx.moveTo(px - rx, yTop);
+    ctx.lineTo(px - rx, py);
+    const N = 12;
+    for (let i = 0; i <= N; i++) {
+      const th = Math.PI - (Math.PI * i) / N; // PI (left) -> 0 (right)
+      ctx.lineTo(px + rx * Math.cos(th), py + ry * Math.sin(th));
+    }
+    ctx.lineTo(px + rx, yTop);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    // subtle right-side shading for roundness
+    ctx.fillStyle = this.darkenColor(body, 0.16);
+    ctx.beginPath();
+    ctx.moveTo(px + rx * 0.35, yTop);
+    ctx.lineTo(px + rx * 0.35, py + ry * 0.78);
+    for (let i = 0; i <= 6; i++) {
+      const th = (Math.PI * 0.32 * i) / 6; // toward the right edge
+      ctx.lineTo(px + rx * Math.cos(th), py + ry * Math.sin(th));
+    }
+    ctx.lineTo(px + rx, yTop);
+    ctx.closePath();
+    ctx.fill();
+
+    // top cap
+    ctx.fillStyle = topColor;
+    ctx.beginPath();
+    ctx.ellipse(px, yTop, rx, ry, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    // crenellations around the front of the rim (right -> left)
+    const n = 6;
+    ctx.fillStyle = body;
+    for (let i = 0; i < n; i++) {
+      const th = Math.PI * (0.1 + 0.8 * (i / (n - 1)));
+      const ex = px + rx * Math.cos(th);
+      const ey = yTop + ry * Math.sin(th);
+      const w = rx * 0.13;
+      ctx.beginPath();
+      ctx.rect(ex - w, ey - crenH, 2 * w, crenH);
+      ctx.fill();
+      ctx.stroke();
     }
 
-    // Center tower (taller)
-    this.ctx.fillStyle = this.darkenColor(color, 0.3);
-    this.ctx.beginPath();
-    this.ctx.arc(x, y - towerHeight / 2, towerSize / 2, 0, Math.PI * 2);
-    this.ctx.fill();
-    this.ctx.stroke();
+    ctx.restore();
+  }
 
-    this.ctx.fillStyle = color;
+  // Square corner tower: a tall iso box with crenellations along its two
+  // viewer-facing top edges.
+  _squareTower(px, py, hw, hh, H, crenH, colors, opacity) {
+    const c = this._isoBox(px, py, hw, hh, 0, H, colors, opacity);
+    this._crenellateEdge(c.Lt, c.Bt, crenH, 3, colors.left, opacity);
+    this._crenellateEdge(c.Bt, c.Rt, crenH, 3, colors.right, opacity);
+    return c;
+  }
+
+  // Town Center: a tall central keep flanked by two lower barn wings, with an
+  // open courtyard at the front. Drawn back-to-front from the ground up.
+  drawTownCenter3D(cx, cy, footprint, color, opacity = 1) {
+    const z = this.zoom;
+    const HW = (footprint * this.tileWidth * z) / 2;
+    const HH = (footprint * this.tileHeight * z) / 2;
+
+    const wall = {
+      top: this.lightenColor(color, 0.14),
+      left: this.darkenColor(color, 0.12),
+      right: this.darkenColor(color, 0.34),
+    };
+    const roofL = this.darkenColor(color, 0.5);
+    const roofR = this.darkenColor(color, 0.66);
+
+    // place a sub-centre at diamond coords u (L->R) / v (T->B), |u|+|v| < 1
+    const at = (u, v) => [cx + u * HW, cy + v * HH];
+
+    // foundation slab over the whole footprint
+    this._isoBox(
+      cx,
+      cy,
+      HW * 0.98,
+      HH * 0.98,
+      0,
+      1.5 * z,
+      {
+        top: this.darkenColor(color, 0.04),
+        left: this.darkenColor(color, 0.2),
+        right: this.darkenColor(color, 0.4),
+      },
+      opacity,
+    );
+
+    // central keep (set back, tallest) with a peaked roof up to the max height
+    {
+      const [kx, ky] = at(0, -0.18);
+      const cap = this._isoBox(
+        kx,
+        ky,
+        HW * 0.34,
+        HH * 0.34,
+        1.5 * z,
+        6.5 * z,
+        wall,
+        opacity,
+      );
+      this._hipRoof(cap, 4.5 * z, roofL, roofR, opacity);
+    }
+
+    // two barn wings (left + right, slightly forward), lower with gable roofs
+    for (const u of [-0.46, 0.46]) {
+      const [bx, by] = at(u, 0.12);
+      const cap = this._isoBox(
+        bx,
+        by,
+        HW * 0.3,
+        HH * 0.3,
+        1.5 * z,
+        4 * z,
+        wall,
+        opacity,
+      );
+      this._hipRoof(cap, 2.5 * z, roofL, roofR, opacity);
+    }
+
+    // courtyard gate posts framing the front opening
+    for (const u of [-0.16, 0.16]) {
+      const [gx, gy] = at(u, 0.52);
+      this._isoBox(gx, gy, HW * 0.05, HH * 0.05, 1.5 * z, 4 * z, wall, opacity);
+    }
+  }
+
+  // Castle: a crenellated curtain wall, a taller inner keep, and four corner
+  // towers (two round, two square) reaching the max height. Drawn back-to-front.
+  drawCastle3D(cx, cy, footprint, color, opacity = 1) {
+    const z = this.zoom;
+    const HW = (footprint * this.tileWidth * z) / 2;
+    const HH = (footprint * this.tileHeight * z) / 2;
+
+    const wall = {
+      top: this.lightenColor(color, 0.12),
+      left: this.darkenColor(color, 0.1),
+      right: this.darkenColor(color, 0.32),
+    };
+    const at = (u, v) => [cx + u * HW, cy + v * HH];
+
+    const wallH = 8 * z; // curtain wall
+    const towerH = 14 * z; // corner towers (+ crenellations)
+    const keepBot = wallH;
+    const keepTop = 15.5 * z; // inner keep second tier
+    const crenH = 2 * z;
+    const tHW = HW * 0.2;
+    const tHH = HH * 0.2;
+    const tR = HW * 0.2;
+    const corner = 0.82; // how far towers sit toward each footprint corner
+
+    // 1. back corner tower (round)
+    {
+      const [tx, ty] = at(0, -corner);
+      this._roundTower(tx, ty, tR, towerH, wall.left, wall.top, crenH, opacity);
+    }
+
+    // 2. curtain wall (full footprint) + crenellations along its front edges
+    {
+      const c = this._isoBox(cx, cy, HW * 0.9, HH * 0.9, 0, wallH, wall, opacity);
+      this._crenellateEdge(c.Lt, c.Bt, crenH, 5, wall.left, opacity);
+      this._crenellateEdge(c.Bt, c.Rt, crenH, 5, wall.right, opacity);
+
+      // gatehouse: a dark arch on the front-right wall face
+      const gm = at(0.45, 0.45);
+      const gW = HW * 0.1;
+      const gH = wallH * 0.7;
+      this.ctx.save();
+      this.ctx.globalAlpha = opacity;
+      this.ctx.fillStyle = "rgba(22,16,11,0.9)";
+      this.ctx.beginPath();
+      this.ctx.moveTo(gm[0] - gW, gm[1] - gW * 0.4);
+      this.ctx.lineTo(gm[0] - gW, gm[1] - gH);
+      this.ctx.quadraticCurveTo(
+        gm[0],
+        gm[1] - gH - gW * 0.5,
+        gm[0] + gW,
+        gm[1] - gH,
+      );
+      this.ctx.lineTo(gm[0] + gW, gm[1] - gW * 0.4);
+      this.ctx.lineTo(gm[0], gm[1] + gW * 0.4);
+      this.ctx.closePath();
+      this.ctx.fill();
+      this.ctx.restore();
+    }
+
+    // 3. inner keep (central second tier, tallest) + crenellations
+    {
+      const [kx, ky] = at(0, -0.05);
+      const c = this._isoBox(
+        kx,
+        ky,
+        HW * 0.4,
+        HH * 0.4,
+        keepBot,
+        keepTop,
+        wall,
+        opacity,
+      );
+      this._crenellateEdge(c.Lt, c.Bt, crenH * 1.2, 3, wall.left, opacity);
+      this._crenellateEdge(c.Bt, c.Rt, crenH * 1.2, 3, wall.right, opacity);
+    }
+
+    // 4. left + right corner towers (square)
+    {
+      const [lx, ly] = at(-corner, 0);
+      this._squareTower(lx, ly, tHW, tHH, towerH, crenH, wall, opacity);
+      const [rx, ry] = at(corner, 0);
+      this._squareTower(rx, ry, tHW, tHH, towerH, crenH, wall, opacity);
+    }
+
+    // 5. front corner tower (round, closest — drawn last)
+    {
+      const [bx, by] = at(0, corner);
+      this._roundTower(bx, by, tR, towerH, wall.left, wall.top, crenH, opacity);
+    }
+  }
+
+  // Helper to lighten a color toward white by `amount` (0..1)
+  lightenColor(color, amount) {
+    if (color.startsWith("#")) {
+      const r = parseInt(color.slice(1, 3), 16);
+      const g = parseInt(color.slice(3, 5), 16);
+      const b = parseInt(color.slice(5, 7), 16);
+      const L = (c) => Math.round(c + (255 - c) * amount);
+      return `rgb(${L(r)}, ${L(g)}, ${L(b)})`;
+    }
+    return color;
   }
 
   // Helper to darken a color
