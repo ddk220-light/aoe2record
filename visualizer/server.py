@@ -999,11 +999,21 @@ def process_replay(replay_file):
     # Identify each commanded unit's type from behavior + production. See
     # _classify_units: villager/military split from each unit's own commands,
     # then a concrete military type from the player's military-only train queue.
+    # v2: group-first, confidence-based classifier (unit_classifier.py). Falls
+    # back to the legacy greedy matcher if anything goes wrong. See
+    # CLASSIFIER_REWORK.md.
+    _canon = lambda x: x  # noqa: E731
     try:
-        unit_type_map = _classify_units(match)
+        import unit_classifier as _uc
+        unit_type_map, _ = _uc.build_type_map(match)
+        _canon = _uc.canonical_id
     except Exception as e:
-        app.logger.warning(f"unit classification failed: {e}")
-        unit_type_map = {}
+        app.logger.warning(f"v2 classification failed, falling back to legacy: {e}")
+        try:
+            unit_type_map = _classify_units(match)
+        except Exception as e2:
+            app.logger.warning(f"legacy classification also failed: {e2}")
+            unit_type_map = {}
 
     # Build unit names
     unit_name_map = {}
@@ -1147,7 +1157,7 @@ def process_replay(replay_file):
 
                 # Type comes from the behavior+production classifier; default to
                 # generic "unit" only if it never appeared in the classifier pass.
-                unit_type = unit_type_map.get(obj_id, "unit")
+                unit_type = unit_type_map.get(_canon(obj_id), "unit")
 
                 unit_counters[owner][unit_type] += 1
                 count = unit_counters[owner][unit_type]

@@ -53,6 +53,12 @@ def main():
     hard = sum(1 for g in ctx.guesses.values() if g.cls != "unknown" and g.instance_id not in ctx.start_ids)
     weight = uc.cocommand_graph(ctx)
     uc.propagate_class(ctx, weight)
+    # Stages 3-4: types
+    uc.production_timeline(ctx)
+    uc.type_units(ctx)
+    squads = uc.form_squads(ctx, weight)
+    uc.type_squads(ctx, squads)
+    uc.finalize(ctx)
     guesses = ctx.guesses
 
     # --- Stage 0 gate: id normalization / no phantom dupes ---
@@ -135,6 +141,25 @@ def main():
               f"  ({100*agree/(agree+disagree):.1f}% agree)" if (agree+disagree) else "  (no overlap)")
     except Exception as e:  # noqa
         print(f"\n(baseline comparison skipped: {e})")
+
+    # --- Stage 3-4: type breakdown vs production ---
+    tb = Counter(g.type for g in tgt)
+    prod = Counter()
+    for a in match.actions:
+        if str(a.type).endswith("DE_QUEUE") and a.player and a.player.name == target and a.payload:
+            prod[uc._norm(a.payload.get("unit"))] += a.payload.get("amount", 1) or 1
+    typed = sum(1 for g in tgt if g.type not in uc.GENERIC_TYPES)
+    print(f"\n== types for {target} ({typed}/{len(tgt)} = {100*typed/len(tgt):.0f}% typed; squads={len(squads)}) ==")
+    print(f"  classified: {dict(tb.most_common())}")
+    print(f"  produced:   {dict(prod.most_common())}")
+    # treb placement
+    treb = [g for g in tgt if g.type == "trebuchet"]
+    if treb:
+        import statistics
+        print(f"  treb-labeled: {len(treb)} (9 queued); median first_seen="
+              f"{statistics.median([g.behavior.get('first_seen',0) for g in treb]):.0f}s "
+              f"%patrol={100*sum(1 for g in treb if g.behavior.get('patrols'))/len(treb):.0f} "
+              f"%atkBldg={100*sum(1 for g in treb if g.behavior.get('attacks_building'))/len(treb):.0f}")
 
 
 if __name__ == "__main__":

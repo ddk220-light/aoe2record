@@ -146,7 +146,10 @@ def build_context(match):
                 ctx.building_ids.add(b)
                 ctx.owner.setdefault(b, a.player.name)
             if at == "DE_QUEUE" and ids:
-                ctx.queues[ids[0]].append((t, _norm(payload.get("unit"))))
+                u = _norm(payload.get("unit"))
+                amt = payload.get("amount", 1) or 1
+                for _ in range(amt):
+                    ctx.queues[ids[0]].append((t, u))
             continue
 
         tgt = payload.get("target_id")
@@ -280,37 +283,207 @@ def propagate_class(ctx, weight, min_weight=2, iters=12):
             _set_class(ctx.guesses[cid], cls, CONF["cocmd_class"], "cocmd")
 
 
-# --- Stages 3-5: filled in subsequent phases -------------------------------
+# --- Stage 3: production timeline -------------------------------------------
+GENERIC_TYPES = {"unit", "military"}
+
+
+def _set_type(g, t, conf, signal):
+    """Monotonic type update; never downgrade a specific type to a generic one."""
+    if not t:
+        return
+    if g.type not in GENERIC_TYPES and t in GENERIC_TYPES:
+        return
+    if (g.type in GENERIC_TYPES and t not in GENERIC_TYPES) or conf > g.type_conf:
+        g.type = t
+        g.type_conf = max(g.type_conf, conf) if g.type == t else conf
+        if signal not in g.signals:
+            g.signals.append(signal)
+
+
 def production_timeline(ctx):
-    """Stage 3 (TODO): per-building serial train-time completion events."""
-    return None
+    """Stage 3: per-building serial completion (max(queue,prev_done)+train_time).
+
+    Returns (full, mil): per-player lists of (completion_time, type), full
+    including villagers, mil military-only.
+    """
+    full = defaultdict(list)
+    mil = defaultdict(list)
+    for b, q in ctx.queues.items():
+        player = ctx.owner.get(b)
+        done = 0.0
+        for ts, u in sorted(q):
+            done = max(ts, done) + TRAIN_TIMES.get(u, 30)
+            full[player].append((done, u))
+            if u != "villager":
+                mil[player].append((done, u))
+    for d in (full, mil):
+        for player in d:
+            d[player].sort()
+    ctx.prod_full, ctx.prod_mil = full, mil
+    return full, mil
 
 
-def form_squads(ctx, weight):
-    """Stage 4a (TODO): cluster the co-command graph into squads."""
-    return []
+def _align(ids_sorted, comp_types):
+    """Proportional rank alignment: i-th created unit -> i-th completion type."""
+    out = {}
+    m = len(comp_types)
+    n = len(ids_sorted)
+    if m == 0:
+        return out
+    for i, cid in enumerate(ids_sorted):
+        j = round(i * (m - 1) / (n - 1)) if n > 1 else 0
+        out[cid] = comp_types[j]
+    return out
 
 
-def type_squads(ctx, squads, prod):
-    """Stage 4b (TODO): assign one type per squad (role + production + id-range)."""
-    return
+def _role_of(g):
+    b = g.behavior
+    if g.cls == "villager":
+        return "eco"
+    if b.get("attacks_building") and not b.get("patrols") and b.get("moves", 0) <= 6:
+        return "siege"
+    if b.get("patrols"):
+        return "cavalry"
+    return "military"
 
 
-def type_remaining(ctx, prod):
-    """Stage 4c (TODO): id-rank fallback typing for ungrouped units."""
-    return
+def type_units(ctx):
+    """Stage 4b/c: assign types from production via creation-order alignment.
+
+    Hard villagers -> 'villager'. Hard military -> aligned to military-only
+    completions. Unknowns -> aligned to the full completion stream (which also
+    decides their class).
+    """
+    by_player = defaultdict(list)
+    for cid, g in ctx.guesses.items():
+        if cid in ctx.building_ids or cid in ctx.start_ids:
+            continue
+        by_player[g.player].append(cid)
+
+    for player, ids in by_player.items():
+        mil_types = [t for _, t in ctx.prod_mil.get(player, [])]
+        full_types = [t for _, t in ctx.prod_full.get(player, [])]
+
+        for cid in ids:
+            g = ctx.guesses[cid]
+            g.role = _role_of(g)
+            if g.cls == "villager":
+                _set_type(g, "villager", 0.9 if g.cls_conf >= CONF["hard_class"] else 0.7, "class")
+
+        hmil = sorted(cid for cid in ids if ctx.guesses[cid].cls == "military")
+        for cid, t in _align(hmil, mil_types).items():
+            _set_type(ctx.guesses[cid], t, CONF["idrank_type"], "idrank")
+
+        unk = sorted(cid for cid in ids if ctx.guesses[cid].cls == "unknown")
+        for cid, t in _align(unk, full_types).items():
+            g = ctx.guesses[cid]
+            if t == "villager":
+                _set_type(g, "villager", CONF["idrank_type"] - 0.05, "idrank")
+                _set_class(g, "villager", CONF["idrank_type"], "idrank")
+            elif t:
+                _set_type(g, t, CONF["idrank_type"] - 0.05, "idrank")
+                _set_class(g, "military", CONF["idrank_type"], "idrank")
+
+
+class _UF:
+    def __init__(self):
+        self.p = {}
+
+    def find(self, x):
+        self.p.setdefault(x, x)
+        while self.p[x] != x:
+            self.p[x] = self.p[self.p[x]]
+            x = self.p[x]
+        return x
+
+    def union(self, a, b):
+        self.p[self.find(a)] = self.find(b)
+
+
+def form_squads(ctx, weight, min_weight=2):
+    """Stage 4a: connected components of the strong co-command graph = squads."""
+    uf = _UF()
+    for (x, y), w in weight.items():
+        if w >= min_weight and x not in ctx.building_ids and y not in ctx.building_ids:
+            uf.union(x, y)
+    comps = defaultdict(list)
+    for cid, g in ctx.guesses.items():
+        if cid in ctx.building_ids or cid in ctx.start_ids:
+            continue
+        comps[uf.find(cid)].append(cid)
+    squads = [c for c in comps.values() if len(c) >= 3]
+    for sid, c in enumerate(squads):
+        for cid in c:
+            ctx.guesses[cid].squad_id = sid
+    return squads
+
+
+def type_squads(ctx, squads):
+    """Stage 4: co-typing smoothing -- a squad's plurality type fills its members.
+
+    Respects hard class (never crosses a hard villager/military boundary) and
+    never downgrades a specific type to generic (handled by _set_type).
+    """
+    for c in squads:
+        votes = Counter()
+        for cid in c:
+            g = ctx.guesses[cid]
+            if g.type not in GENERIC_TYPES:
+                votes[g.type] += g.type_conf
+        if not votes:
+            continue
+        top, _ = votes.most_common(1)[0]
+        frac = sum(1 for cid in c if ctx.guesses[cid].type == top) / len(c)
+        conf = min(CONF["squad_type"], 0.5 + 0.4 * frac)
+        tcls = "villager" if top == "villager" else "military"
+        for cid in c:
+            g = ctx.guesses[cid]
+            if g.cls_conf >= CONF["hard_class"] and g.cls != tcls:
+                continue  # don't override a hard class
+            # Co-typing FILLS gaps -- it must not overwrite a confident specific
+            # type, or the dominant unit (huszar) eats the minorities (CA/treb).
+            # A unit's own id-rank type is kept; only generic/unknown members
+            # inherit the squad's plurality. (Squad-level typing is a later phase.)
+            if g.type in GENERIC_TYPES:
+                _set_type(g, top, conf, "squad")
+            if g.cls == "unknown":
+                _set_class(g, tcls, conf, "squad")
 
 
 def finalize(ctx):
-    """Stage 5 (TODO): monotonic merge; never downgrade a specific type."""
-    return
+    """Stage 5: fill any still-generic military with the player's dominant type."""
+    dom = {}
+    for player, comp in ctx.prod_mil.items():
+        c = Counter(t for _, t in comp)
+        if c:
+            dom[player] = c.most_common(1)[0][0]
+    for g in ctx.guesses.values():
+        if g.cls == "military" and g.type in GENERIC_TYPES and g.player in dom:
+            _set_type(g, dom[g.player], CONF["fallback"], "dominant")
 
 
 def classify(match):
-    """Run the pipeline. Returns {canonical instance_id: UnitGuess}."""
+    """Run the full pipeline. Returns {canonical instance_id: UnitGuess}."""
     ctx = build_context(match)
     behavioral_labels(ctx)
     weight = cocommand_graph(ctx)
     propagate_class(ctx, weight)
-    # Stages 3-5 (type assignment) land in later phases.
+    production_timeline(ctx)
+    type_units(ctx)
+    squads = form_squads(ctx, weight)
+    type_squads(ctx, squads)
+    finalize(ctx)
     return ctx.guesses
+
+
+def build_type_map(match):
+    """Flat {instance_id: type_string} for process_replay, covering raw and
+    shifted ids. Class-only units resolve to 'villager' or 'unit'."""
+    guesses = classify(match)
+    flat = {}
+    for cid, g in guesses.items():
+        t = g.type
+        if t in GENERIC_TYPES:
+            t = "villager" if g.cls == "villager" else "unit"
+        flat[cid] = t
+    return flat, guesses
