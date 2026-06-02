@@ -1242,8 +1242,10 @@ class Playback {
     const deltaTime = (timestamp - this.lastFrameTime) / 1000; // Convert to seconds
     this.lastFrameTime = timestamp;
 
-    // Advance time
-    this.currentTime += deltaTime * this.playbackSpeed;
+    // Advance game time. AoE2's "normal" speed runs the simulation at 1.7 game
+    // seconds per real second (internally 20 ticks/game-second). So the 1x speed
+    // button matches AoE2 normal speed, and 2x/4x/... are multiples of it.
+    this.currentTime += deltaTime * this.playbackSpeed * Playback.NORMAL_SPEED;
 
     // Check if we've reached the end
     if (this.currentTime >= this.duration) {
@@ -1306,6 +1308,11 @@ class Playback {
     this.seekTo(this.duration);
   }
 }
+
+// AoE2 "normal" game speed: 1.7 game-seconds advance per real second. The 1x
+// playback-speed button is anchored to this so it matches watching at normal
+// speed in-game; higher speed buttons multiply it.
+Playback.NORMAL_SPEED = 1.7;
 
 // Export for use in other modules
 window.Playback = Playback;

@@ -25,6 +25,15 @@ class App {
     this.playerLegend = document.getElementById("player-legend");
     this.playerTracker = document.getElementById("player-tracker");
     this.fileInput = document.getElementById("file-input");
+    this.saveRecordBtn = document.getElementById("save-record-btn");
+
+    // Timeline scrubbing state: while the user drags the marker we pause the
+    // engine and stop the play loop from yanking the thumb back, then resume.
+    this.isScrubbing = false;
+    this._wasPlayingBeforeScrub = false;
+    // Last play/pause state pushed to the button label (so the render loop only
+    // touches the DOM when it actually changes).
+    this._btnPlayState = null;
 
     // Match browsing UI elements
     this.browseMatchesBtn = document.getElementById("browse-matches-btn");
@@ -453,6 +462,22 @@ class App {
   }
 
   initializeWithData() {
+    // Fully tear down any previous session so a new load can't leave the old
+    // one running. The old Playback drives its own requestAnimationFrame loop
+    // (separate from the render loop), so without pausing it + detaching its
+    // callback it keeps advancing time and fighting the new match.
+    if (this.renderLoopId) {
+      cancelAnimationFrame(this.renderLoopId);
+      this.renderLoopId = null;
+    }
+    if (this.playback) {
+      this.playback.pause();
+      this.playback.onTimeUpdate = null;
+    }
+    this.isScrubbing = false;
+    this._wasPlayingBeforeScrub = false;
+    this._btnPlayState = null;
+
     // Initialize renderer
     this.renderer = new Renderer(this.canvas, this.data.match.map_size);
     this.renderer.setPlayerColors(this.data.players);
@@ -909,14 +934,18 @@ class App {
       const file = e.target.files[0];
       if (!file) return;
 
-      if (file.name.endsWith(".json")) {
-        // Load pre-processed JSON file directly
+      if (
+        file.name.endsWith(".json") ||
+        file.name.endsWith(".aoe2ddkrecord")
+      ) {
+        // Pre-processed snapshot (our own .aoe2ddkrecord is just this JSON):
+        // load directly, no server parse needed.
         await this.loadJsonFile(file);
       } else if (file.name.endsWith(".aoe2record")) {
-        // Try to upload to server API
+        // Raw replay — upload to the server to be parsed.
         await this.uploadReplay(file);
       } else {
-        alert("Please select a .aoe2record or .json file");
+        alert("Please select a .aoe2record, .aoe2ddkrecord, or .json file");
       }
     });
   }
@@ -942,6 +971,36 @@ class App {
     }
 
     this.fileInput.value = "";
+  }
+
+  // Save the fully-processed match data as a <matchid>.aoe2ddkrecord file. This
+  // is exactly the JSON the visualizer runs on, so it can be reloaded later to
+  // keep watching without re-downloading / re-parsing the raw .aoe2record.
+  saveRecord() {
+    if (!this.data) {
+      alert("Load a match first, then save.");
+      return;
+    }
+    const matchId = this.data.source && this.data.source.matchId;
+    const mapName = (this.data.match && this.data.match.map_name) || "replay";
+    const dur = Math.round(
+      (this.data.match && this.data.match.duration_seconds) || 0,
+    );
+    const base = matchId
+      ? String(matchId)
+      : `${mapName.replace(/[^\w]+/g, "_")}_${dur}s`;
+
+    const blob = new Blob([JSON.stringify(this.data)], {
+      type: "application/json",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${base}.aoe2ddkrecord`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
   }
 
   async uploadReplay(file) {
@@ -1018,10 +1077,36 @@ class App {
         this.playback.stepBackward(),
       );
 
-      // Timeline scrubbing
+      // Timeline scrubbing. While dragging we pause the engine (so the play
+      // loop doesn't fight the thumb) and seek live to wherever the marker is,
+      // then resume if it was playing. This makes the marker land exactly where
+      // you point it instead of jumping.
+      const startScrub = () => {
+        if (this.isScrubbing) return;
+        this.isScrubbing = true;
+        this._wasPlayingBeforeScrub = this.playback.isPlaying;
+        this.playback.pause();
+      };
+      const endScrub = () => {
+        if (!this.isScrubbing) return;
+        this.isScrubbing = false;
+        if (this._wasPlayingBeforeScrub) this.playback.play();
+        this._wasPlayingBeforeScrub = false;
+      };
+      this.timeline.addEventListener("pointerdown", startScrub);
+      this.timeline.addEventListener("pointerup", endScrub);
+      this.timeline.addEventListener("pointercancel", endScrub);
       this.timeline.addEventListener("input", (e) => {
+        // Keyboard nudges (focus + arrows) fire input without a pointerdown;
+        // treat those as an instantaneous seek too.
         this.playback.seekTo(parseFloat(e.target.value));
       });
+      this.timeline.addEventListener("change", endScrub);
+
+      // Save the processed match as a .aoe2ddkrecord file.
+      if (this.saveRecordBtn) {
+        this.saveRecordBtn.addEventListener("click", () => this.saveRecord());
+      }
 
       // Speed buttons
       this.speedButtons.forEach((btn) => {
@@ -1182,9 +1267,21 @@ class App {
   }
 
   togglePlay() {
-    const isPlaying = this.playback.togglePlayPause();
-    this.btnPlay.textContent = isPlaying ? "Pause" : "Play";
-    this.btnPlay.classList.toggle("playing", isPlaying);
+    // Just flip the engine; the render loop keeps the button label in sync with
+    // the real play state (so it's correct even when playback auto-pauses at the
+    // end, or when a new match is loaded).
+    this.playback.togglePlayPause();
+    this.syncPlayButton();
+  }
+
+  // Reflect the engine's actual play state on the button. Cheap to call every
+  // frame: it only touches the DOM when the state flips.
+  syncPlayButton() {
+    const playing = !!(this.playback && this.playback.isPlaying);
+    if (this._btnPlayState === playing) return;
+    this._btnPlayState = playing;
+    this.btnPlay.textContent = playing ? "Pause" : "Play";
+    this.btnPlay.classList.toggle("playing", playing);
   }
 
   setSpeed(speed) {
@@ -1200,7 +1297,8 @@ class App {
 
   onTimeUpdate(time) {
     this.currentTimeDisplay.textContent = this.playback.formatTime(time);
-    this.timeline.value = time;
+    // Don't move the thumb out from under the user while they're dragging it.
+    if (!this.isScrubbing) this.timeline.value = time;
 
     // Update player tracker every second (avoid excessive updates)
     if (Math.abs(time - this.lastTrackerUpdate) >= 1) {
@@ -1354,6 +1452,9 @@ class App {
       };
 
       this.renderer.render(filteredState);
+      // Keep the play/pause button label honest regardless of how the state
+      // changed (click, spacebar, end-of-game auto-pause, scrub).
+      this.syncPlayButton();
       this.renderLoopId = requestAnimationFrame(render);
     };
 
