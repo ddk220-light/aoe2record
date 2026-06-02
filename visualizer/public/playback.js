@@ -220,6 +220,7 @@ class Playback {
     for (const [unitName, movements] of this.unitMovements) {
       if (!Playback.SIEGE_SHOOTER_RE.test(unitName)) continue;
       const player = this.unitOwners.get(unitName);
+      const kind = /bombard/i.test(unitName) ? "bombard" : "treb";
       for (let i = 0; i < movements.length; i++) {
         if (!movements[i].isAttack) continue;
         const end =
@@ -231,6 +232,7 @@ class Playback {
         this.trebAttacks.push({
           unitName,
           player,
+          kind, // "treb" (flaming lob) or "bombard" (flat black cannonball)
           targetX: movements[i].x, // the ORDER position = the targeted building
           targetY: movements[i].y,
           start: movements[i].time,
@@ -1133,6 +1135,7 @@ class Playback {
           toX: ep.targetX,
           toY: ep.targetY,
           player: ep.player,
+          kind: ep.kind,
           shots,
         });
       }

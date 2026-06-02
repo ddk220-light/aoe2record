@@ -1893,8 +1893,12 @@ class Renderer {
     const dy = to.y - from.y;
     const dist = Math.hypot(dx, dy);
     const unitPx = this.tileHeight * this.zoom * 0.9 * 1.25;
-    const arcH = Math.max(unitPx * 1.8, Math.min(120, dist * 0.5));
-    const r = Math.max(3.5, unitPx * 0.5); // flaming ball radius
+    const bombard = tp.kind === "bombard";
+    // Bombard cannon: a flat, fast cannonball. Trebuchet: a high, slow lob.
+    const arcH = bombard
+      ? Math.max(unitPx * 0.5, Math.min(40, dist * 0.16))
+      : Math.max(unitPx * 1.8, Math.min(120, dist * 0.5));
+    const r = Math.max(3, unitPx * (bombard ? 0.4 : 0.5));
     const ctx = this.ctx;
 
     // Position along the parabola at parameter q in [0,1].
@@ -1907,47 +1911,79 @@ class Renderer {
       const pt = arcPos(p);
 
       if (p > 0.88) {
-        this.drawImpactFlash(to.x, to.y, (p - 0.88) / 0.12);
+        this.drawImpactFlash(to.x, to.y, (p - 0.88) / 0.12, bombard);
       }
 
       ctx.save();
-      // Motion trail: a few fading balls behind the head along the arc.
-      for (let i = 4; i >= 1; i--) {
-        const q = Math.max(0, p - i * 0.05);
-        const tpos = arcPos(q);
-        ctx.globalAlpha = 0.1 * (5 - i);
-        ctx.fillStyle = "#ff8a1e";
+      if (bombard) {
+        // Grey smoke trail behind the cannonball.
+        for (let i = 4; i >= 1; i--) {
+          const q = Math.max(0, p - i * 0.05);
+          const tpos = arcPos(q);
+          ctx.globalAlpha = 0.07 * (5 - i);
+          ctx.fillStyle = "#9a9a9a";
+          ctx.beginPath();
+          ctx.arc(tpos.x, tpos.y, r * (0.5 + 0.13 * (5 - i)), 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.globalAlpha = 1;
+        // Solid black iron ball with a thin rim + small highlight (sheen).
+        ctx.fillStyle = "#0b0b0b";
         ctx.beginPath();
-        ctx.arc(tpos.x, tpos.y, r * (0.45 + 0.1 * (5 - i)), 0, Math.PI * 2);
+        ctx.arc(pt.x, pt.y, r, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = "rgba(0, 0, 0, 0.9)";
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        ctx.fillStyle = "rgba(230, 230, 230, 0.4)";
+        ctx.beginPath();
+        ctx.arc(pt.x - r * 0.32, pt.y - r * 0.32, r * 0.3, 0, Math.PI * 2);
+        ctx.fill();
+      } else {
+        // Flaming boulder: orange body, bright core, glowing trail.
+        for (let i = 4; i >= 1; i--) {
+          const q = Math.max(0, p - i * 0.05);
+          const tpos = arcPos(q);
+          ctx.globalAlpha = 0.1 * (5 - i);
+          ctx.fillStyle = "#ff8a1e";
+          ctx.beginPath();
+          ctx.arc(tpos.x, tpos.y, r * (0.45 + 0.1 * (5 - i)), 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = "rgba(40, 12, 0, 0.9)";
+        ctx.beginPath();
+        ctx.arc(pt.x, pt.y, r + 1.5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = "#ff7415";
+        ctx.beginPath();
+        ctx.arc(pt.x, pt.y, r, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = "#fff2b0";
+        ctx.beginPath();
+        ctx.arc(pt.x, pt.y, r * 0.5, 0, Math.PI * 2);
         ctx.fill();
       }
-      ctx.globalAlpha = 1;
-      // The ball: dark rim for contrast, orange body, bright core.
-      ctx.fillStyle = "rgba(40, 12, 0, 0.9)";
-      ctx.beginPath();
-      ctx.arc(pt.x, pt.y, r + 1.5, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = "#ff7415";
-      ctx.beginPath();
-      ctx.arc(pt.x, pt.y, r, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = "#fff2b0";
-      ctx.beginPath();
-      ctx.arc(pt.x, pt.y, r * 0.5, 0, Math.PI * 2);
-      ctx.fill();
       ctx.restore();
     }
   }
 
-  // Expanding flash at the impact point; t in 0..1 over the last bit of flight.
-  drawImpactFlash(x, y, t) {
+  // Expanding burst at the impact point; t in 0..1 over the last bit of flight.
+  // Bombard impacts puff grey smoke; trebuchet impacts flash fire.
+  drawImpactFlash(x, y, t, bombard = false) {
     const ctx = this.ctx;
     const radius = (6 + 16 * t) * Math.max(0.6, this.zoom);
     ctx.save();
     const g = ctx.createRadialGradient(x, y, 0, x, y, radius);
-    g.addColorStop(0, `rgba(255, 240, 180, ${0.95 * (1 - t)})`);
-    g.addColorStop(0.5, `rgba(255, 130, 20, ${0.7 * (1 - t)})`);
-    g.addColorStop(1, "rgba(180, 40, 0, 0)");
+    if (bombard) {
+      g.addColorStop(0, `rgba(180, 180, 180, ${0.75 * (1 - t)})`);
+      g.addColorStop(0.6, `rgba(90, 90, 90, ${0.45 * (1 - t)})`);
+      g.addColorStop(1, "rgba(60, 60, 60, 0)");
+    } else {
+      g.addColorStop(0, `rgba(255, 240, 180, ${0.95 * (1 - t)})`);
+      g.addColorStop(0.5, `rgba(255, 130, 20, ${0.7 * (1 - t)})`);
+      g.addColorStop(1, "rgba(180, 40, 0, 0)");
+    }
     ctx.fillStyle = g;
     ctx.beginPath();
     ctx.arc(x, y, radius, 0, Math.PI * 2);
