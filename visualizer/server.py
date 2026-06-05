@@ -1516,6 +1516,60 @@ def load_match():
         return jsonify({"error": f"Failed to process replay: {str(e)}"}), 500
 
 
+CLIP_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "public", "clips")
+
+
+@app.route("/api/clip", methods=["GET"])
+def make_clip():
+    """Generate (or reuse a cached) short shareable WebM of a match's biggest
+    engagements (<=30s, 8x, with a skip-aware timeline). Reuses the same replay
+    download/cache as /api/load-match.
+
+    Query: matchId, profileId, [player]. Returns {clip_url, view_url}."""
+    import re as _re
+
+    match_id = request.args.get("matchId") or request.args.get("match_id")
+    profile_id = request.args.get("profileId") or request.args.get("profile_id")
+    player = request.args.get("player")
+    if not match_id or not profile_id:
+        return jsonify({"error": "matchId and profileId are required"}), 400
+    try:
+        cache_path = _fetch_replay_to_cache(match_id, profile_id)
+    except RuntimeError as e:
+        return jsonify({"error": str(e)}), (429 if "429" in str(e) else 502)
+    except Exception as e:
+        return jsonify({"error": f"download failed: {e}"}), 502
+
+    safe = _re.sub(r"[^A-Za-z0-9_-]", "", (player or "all"))[:40] or "all"
+    os.makedirs(CLIP_DIR, exist_ok=True)
+    out_name = f"{match_id}_{safe}.webm"
+    out_path = os.path.join(CLIP_DIR, out_name)
+    if not (os.path.exists(out_path) and os.path.getsize(out_path) > 0):
+        try:
+            import clip_export
+            with open(cache_path, "rb") as f:
+                match = mgz.model.parse_match(f)
+            focus = None
+            if player:
+                focus = next((p.name for p in match.players if p.name == player), None)
+            if not focus:
+                focus = next((p.name for p in match.players
+                              if str(getattr(p, "profile_id", "")) == str(profile_id)), None)
+            if not focus and match.players:
+                focus = match.players[0].name
+            clip_export.build_clip(match, focus or "", out_path)
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return jsonify({"error": f"clip generation failed: {e}"}), 500
+
+    base = request.host_url.rstrip("/")
+    return jsonify({
+        "clip_url": f"{base}/clips/{out_name}",
+        "view_url": f"{base}/?matchId={match_id}&profileId={profile_id}",
+    })
+
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
     debug = os.environ.get("FLASK_DEBUG", "true").lower() == "true"

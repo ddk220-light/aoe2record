@@ -7,3 +7,7 @@ mgz @ https://github.com/sanduckhan/aoc-mgz/archive/a1683d8eeca67796ced0d0c05b14
 gunicorn>=21.0.0
 requests>=2.31.0
 # Required for AoE2 Companion API calls
+# Server-side WebM clip export (clip_export.py): Pillow renders frames, the
+# imageio-ffmpeg wheel bundles an ffmpeg binary so no apt install is needed.
+Pillow>=10.0.0
+imageio-ffmpeg>=0.4.9
