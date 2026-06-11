@@ -6,6 +6,26 @@ This document describes the architecture and implementation of the AoE2 Replay V
 
 A browser-based tool to visualize Age of Empires II: Definitive Edition replay files (`.aoe2record`). Users can upload replay files, watch unit movements on an isometric map, and control playback.
 
+## Repo layout (since 2026-06-10)
+
+- `visualizer/` — the deployed product (everything below in this guide). The root
+  Dockerfile copies ONLY this directory.
+- `lab/` — the ground-truth research toolkit, merged in from the formerly standalone
+  `aoe2grpc` repo (github.com/ddk220-light/aoe2grpc is now a frozen archive). It captures
+  live games over the game's gRPC API, decodes state, extracts per-unit truth labels, and
+  scores/improves `visualizer/unit_classifier.py`. See `lab/README.md` and
+  `lab/_improve/REPORT.md`.
+  - Scorer pattern: `cd lab`, set `$env:UC_DIR` to a directory containing a candidate
+    `unit_classifier.py` (+ `train_times.json`), then
+    `python _improve\score_game.py <replay> <labels.json> <end_min>`.
+  - Lab data files (GB-scale `.bin` captures, `*.aoe2record`, keys/certs) are gitignored
+    via `lab/.gitignore` and must NEVER be committed.
+- `docs/ANALYZER_SYNC.md` — standing guide for syncing replay features downstream into
+  the aoe2-unit-analyzer website (which embeds a fork of this viewer under `/replay`).
+  This repo is canonical; develop replay features here first.
+- Deploy caution: prefer git-push deploys (Option 1 below). `railway up` uploads the
+  local build context; `.dockerignore`/`.railwayignore` exclude `lab/` to keep that sane.
+
 ## Architecture
 
 ```

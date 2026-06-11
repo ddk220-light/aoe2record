@@ -1,6 +1,6 @@
 # AoE2 Replay Analyzer & Visualizer
 
-A collection of Python tools to analyze Age of Empires II: Definitive Edition replay files (`.aoe2record`) and a browser-based visualizer to watch the game unfold.
+The canonical home of the AoE2:DE replay engine: Python tools to analyze Age of Empires II: Definitive Edition replay files (`.aoe2record`), a browser-based visualizer to watch the game unfold, and the ground-truth research lab that iterates on the unit classifier.
 
 ## Features
 
@@ -9,29 +9,43 @@ A collection of Python tools to analyze Age of Empires II: Definitive Edition re
 - **Detect unit deaths** based on inactivity threshold
 - **Browser-based visualizer** with isometric diamond map view
 - **Playback controls** with variable speed and timeline scrubbing
+- **Unit-type classifier** (`visualizer/unit_classifier.py`) that infers each unit's true type from the command stream alone — measured and improved against gRPC ground-truth labels in `lab/`
 
 ## Project Structure
 
 ```
 aoe2record/
-├── analyzers/           # Python analysis scripts
-│   ├── extract_stats.py      # Export all stats to CSV files
-│   ├── extract_journeys.py   # Track unit journeys
-│   ├── aoe2_analyzer.py      # Basic replay analysis
-│   ├── unit_analyzer.py      # Detailed unit analysis
-│   ├── unit_journey.py       # Villager journey tracking
-│   └── military_journey.py   # Military unit tracking with death detection
-├── visualizer/          # Browser-based replay visualizer
-│   ├── index.html
-│   ├── style.css
-│   ├── app.js
-│   ├── renderer.js
-│   ├── playback.js
+├── visualizer/          # THE PRODUCT — deployed to Railway (Dockerfile copies only this)
+│   ├── server.py             # Flask backend (upload, player search, aoe.ms downloads, clips)
+│   ├── unit_classifier.py    # Production classifier (improved 2026-06-10: military
+│   │                         #   accuracy g0 80.9→84.7%, train 78.9→90.8%, holdout held)
+│   ├── public/               # Viewer UI (app.js, renderer.js, playback.js, sprites)
 │   └── generate_data.py      # Export replay to JSON for visualizer
-├── docs/                # Documentation
+├── lab/                 # THE LAB — ground-truth research toolkit (formerly the standalone
+│   │                    #   aoe2grpc repo; that GitHub repo is now frozen as an archive).
+│   │                    #   gRPC capture → state decode → per-unit truth labels →
+│   │                    #   classifier scoring & improvement. See lab/README.md.
+│   └── _improve/             # Scoring harness + improvement workspaces + REPORT.md
+├── analyzers/           # Python analysis scripts (stats, journeys, deaths)
+├── docs/                # Documentation (incl. ANALYZER_SYNC.md — how the matchup
+│                        #   website pulls replay features from this repo)
 ├── replays/             # Place replay files here
 └── download_replays.py  # Download replays from aoe2.net
 ```
+
+## The iteration loop
+
+Replay features and classifier improvements happen **here first**, then flow outward:
+
+1. `lab/` improves the classifier against gRPC ground-truth labels
+   (score with `cd lab; $env:UC_DIR='<candidate dir>'; python _improve\score_game.py <replay> <labels> <end_min>`)
+2. A verified winner is copied to `visualizer/unit_classifier.py`
+3. `git push origin main` deploys the visualizer to Railway
+4. The matchup website (aoe2-unit-analyzer) pulls features downstream by following
+   `docs/ANALYZER_SYNC.md`
+
+Large lab data (GB-scale `.bin` gRPC captures, replays, keys) is gitignored and
+never committed; `.dockerignore`/`.railwayignore` keep `lab/` out of deploys.
 
 ## Installation
 
